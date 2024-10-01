@@ -1,5 +1,3 @@
-# players_screen.py
-
 import tkinter as tk
 from tkinter import simpledialog, colorchooser, messagebox
 from player import Player  # Import the Player class
@@ -64,11 +62,15 @@ class PlayersScreen:
             color = colorchooser.askcolor(title="Choose player color")
             if color[0]:
                 faction = simpledialog.askstring("Faction", "Enter faction name (optional):")
-                player = Player(name, color[0], faction)
-                self.app.players.append(player)
-                self.update_player_list()
-                if hasattr(self.app.current_screen, 'update_player_buttons'):
-                    self.app.current_screen.update_player_buttons()
+                try:
+                    name, color, faction = self.app.validate_player_data(name, color[0], faction)
+                    player = Player(name, color, faction)
+                    self.app.players.append(player)
+                    self.update_player_list()
+                    if hasattr(self.app.current_screen, 'update_player_buttons'):
+                        self.app.current_screen.update_player_buttons()
+                except ValueError as e:
+                    messagebox.showerror("Invalid Input", str(e))
 
     def edit_player(self):
         if self.selected_player:
@@ -79,12 +81,16 @@ class PlayersScreen:
                 if color[0]:
                     faction = simpledialog.askstring("Faction", "Edit faction name (optional):",
                                                      initialvalue=player.faction)
-                    player.name = name
-                    player.color = color[0]
-                    player.faction = faction
-                    self.update_player_list()
-                    if hasattr(self.app.current_screen, 'update_player_buttons'):
-                        self.app.current_screen.update_player_buttons()
+                    try:
+                        name, color, faction = self.app.validate_player_data(name, color[0], faction)
+                        player.name = name
+                        player.color = color
+                        player.faction = faction
+                        self.update_player_list()
+                        if hasattr(self.app.current_screen, 'update_player_buttons'):
+                            self.app.current_screen.update_player_buttons()
+                    except ValueError as e:
+                        messagebox.showerror("Invalid Input", str(e))
         else:
             messagebox.showwarning("No Selection", "Please select a player to edit.")
 

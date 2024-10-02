@@ -8,6 +8,10 @@ class RollScreen:
     def __init__(self, parent, app):
         self.parent = parent
         self.app = app
+        if self.app.roll_mode == 'external':
+            messagebox.showinfo("Disabled", "Rolling is disabled in external roll mode.")
+            self.app.show_game_screen()
+            return
         self.frame = tk.Frame(parent)
         self.frame.pack(fill=tk.BOTH, expand=True)
         self.setup_widgets()
@@ -40,7 +44,7 @@ class RollScreen:
         self.app.all_roll_results.append((self.app.current_turn, self.app.roll_results.copy()))
         self.display_roll_results()
         self.display_all_roll_results()
-        # Update player list if PlayersScreen is active
+        # Update player list if current screen has update_player_list method
         if hasattr(self.app.current_screen, 'update_player_list'):
             self.app.current_screen.update_player_list()
 

@@ -1,11 +1,10 @@
+# mspaintrisk_editor.py
+
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog, colorchooser
 from PIL import Image, ImageTk, ImageDraw
 import os
 import json
-import base64
-import io
-import shutil
 
 from player import Player
 from game_state import GameState
@@ -16,55 +15,80 @@ from game_screen import GameScreen
 from players_screen import PlayersScreen
 from alliances_screen import AlliancesScreen
 from roll_screen import RollScreen
+from start_screen import StartScreen  # Import StartScreen class
+
 
 class MSPaintRiskEditor:
     def __init__(self, master):
         self.master = master
         self.master.title("MSPaint Risk Editor")
-        # Initialize shared data
-        self.map_image = self.original_map_image = self.map_photo = self.map_draw = None
+        self.master.geometry("1024x768")
+        self.roll_mode = None  # Will be set by the StartScreen
+        self.setup_menu()
+        self.setup_ui()
+        self.initialize_variables()
+        self.show_start_screen()  # Start with the StartScreen
+
+    def initialize_variables(self):
+        self.game_name = "Untitled Game"
+        self.current_turn = 0
         self.players = []
         self.game_states = []
-        self.roll_results = []
-        self.all_roll_results = []
-        self.current_turn = 0
-        self.selected_player = None
-        self.game_name = "Untitled Game"
-        self.mode = 'color'
-        self.map_history = []
-        self.max_history = 20
         self.roll_table = RollTable()
-        self.player_rolls = {}
-        self.tile_owners = {}
-        self.temp_dir = "temp_images"
-        os.makedirs(self.temp_dir, exist_ok=True)
-        # Setup GUI
-        self.setup_menu()
-        self.setup_topbar()
-        self.content_frame = tk.Frame(self.master)
-        self.content_frame.pack(fill=tk.BOTH, expand=True)
-        # Initialize current screen
+        self.all_roll_results = []
+        self.map_image = None
+        self.map_photo = None
+        self.map_draw = None
+        self.original_map_image = None
+        self.map_history = []
+        self.max_history = 10
+        self.temp_dir = "temp_maps"
         self.current_screen = None
-        self.show_game_screen()
+        self.player_rolls = {}
+        self.roll_results = []
+        self.tile_owners = {}
+        self.mode = 'color'
+        self.selected_player = None
+        if not os.path.exists(self.temp_dir):
+            os.makedirs(self.temp_dir)
 
     def setup_menu(self):
-        menu_bar = tk.Menu(self.master)
-        file_menu = tk.Menu(menu_bar, tearoff=0)
-        for label, cmd in [("Import Map", self.import_map), ("Save Game", self.save_game), ("Load Game", self.load_game),
-                           ("Export Map as PNG", self.export_map), ("Export GIF of Game Progression", self.export_gif),
-                           ("Exit", self.on_exit)]:
-            file_menu.add_command(label=label, command=cmd)
-            if label in ["Load Game", "Export GIF of Game Progression"]:
-                file_menu.add_separator()
-        menu_bar.add_cascade(label="File", menu=file_menu)
-        self.master.config(menu=menu_bar)
+        self.menu_bar = tk.Menu(self.master)
+        self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
+        self.file_menu.add_command(label="Import Map", command=self.import_map)
+        self.file_menu.add_command(label="Export Map", command=self.export_map)
+        self.file_menu.add_command(label="Export GIF", command=self.export_gif)
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label="Save Game", command=self.save_game)
+        self.file_menu.add_command(label="Load Game", command=self.load_game)
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label="Exit", command=self.on_exit)
+        self.menu_bar.add_cascade(label="File", menu=self.file_menu)
+        self.master.config(menu=self.menu_bar)
 
-    def setup_topbar(self):
-        self.topbar = tk.Frame(self.master)
-        self.topbar.pack(side=tk.TOP, fill=tk.X)
-        for text, cmd in [("Game", self.show_game_screen), ("Players", self.show_players_screen),
-                          ("Alliances", self.show_alliances_screen), ("Roll", self.show_roll_screen)]:
-            tk.Button(self.topbar, text=text, command=cmd).pack(side=tk.LEFT, padx=2)
+    def setup_ui(self):
+        self.main_frame = tk.Frame(self.master)
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
+        self.toolbar = tk.Frame(self.main_frame)
+        self.toolbar.pack(side=tk.TOP, fill=tk.X)
+        self.content_frame = tk.Frame(self.main_frame)
+        self.content_frame.pack(fill=tk.BOTH, expand=True)
+        self.setup_toolbar_buttons()
+
+    def setup_toolbar_buttons(self):
+        # Remove existing toolbar buttons
+        for widget in self.toolbar.winfo_children():
+            widget.destroy()
+        # Create toolbar buttons
+        for text, cmd in [("Game", self.show_game_screen),
+                          ("Players", self.show_players_screen),
+                          ("Alliances", self.show_alliances_screen),
+                          ("Roll", self.show_roll_screen)]:
+            btn = tk.Button(self.toolbar, text=text, command=cmd)
+            btn.pack(side=tk.LEFT, padx=2, pady=2)
+
+    def show_start_screen(self):
+        self.switch_screen(StartScreen)
 
     def show_game_screen(self):
         self.switch_screen(GameScreen)
@@ -76,23 +100,28 @@ class MSPaintRiskEditor:
         self.switch_screen(AlliancesScreen)
 
     def show_roll_screen(self):
+        if self.roll_mode == 'external':
+            messagebox.showinfo("Disabled", "Rolling is disabled in external roll mode.")
+            return
         self.switch_screen(RollScreen)
 
     def switch_screen(self, screen_class):
         # Destroy current screen if it exists
         if self.current_screen:
             self.current_screen.destroy()
+        # Show or hide toolbar based on screen
+        if screen_class == StartScreen:
+            self.toolbar.pack_forget()
+        else:
+            self.toolbar.pack(side=tk.TOP, fill=tk.X)
+            self.setup_toolbar_buttons()
         # Initialize new screen
         self.current_screen = screen_class(self.content_frame, self)
 
+    # Shared methods for menu actions
     def import_map(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png;*.bmp;*.jpg;*.jpeg")])
+        file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png;*.jpg;*.jpeg")])
         if file_path:
-            file_extension = os.path.splitext(file_path)[1].lower()
-            if file_extension in ['.jpg', '.jpeg']:
-                response = messagebox.askokcancel("Warning", "JPEG files may cause artifacts due to compression. It's recommended to use PNG or BMP files. Do you want to continue?")
-                if not response:
-                    return
             self.map_image = Image.open(file_path).convert("RGBA")
             self.map_draw = ImageDraw.Draw(self.map_image)
             self.original_map_image = self.map_image.copy()
@@ -128,129 +157,63 @@ class MSPaintRiskEditor:
                     "allies": [ally.name for ally in player.allies],
                     "naps": [nap.name for nap in player.naps]
                 } for player in self.players],
-                "game_states": [],
+                "game_states": [state.map_image_path for state in self.game_states],
                 "roll_table": {
                     "number_values": self.roll_table.number_values,
                     "repeats_config": self.roll_table.repeats_config,
                     "palindromes_config": self.roll_table.palindromes_config
                 },
-                "all_roll_results": self.all_roll_results
+                "all_roll_results": self.all_roll_results,  # Save all roll results
+                "roll_mode": self.roll_mode  # Save the roll mode
             }
-
-            # Save map images as base64 encoded strings
-            for state in self.game_states:
-                try:
-                    with open(state.map_image_path, "rb") as img_file:
-                        encoded_string = base64.b64encode(img_file.read()).decode('utf-8')
-                        game_data["game_states"].append({
-                            "turn_number": state.turn_number,
-                            "image_data": encoded_string
-                        })
-                except FileNotFoundError:
-                    messagebox.showwarning("Image Not Found", f"Map image for turn {state.turn_number} not found. This turn's map will not be saved.")
-
-            # Save the game data
-            with open(file_path, 'w') as f:
-                json.dump(game_data, f)
-            messagebox.showinfo("Game Saved", "Game has been saved successfully.")
+            try:
+                with open(file_path, 'w') as f:
+                    json.dump(game_data, f)
+                messagebox.showinfo("Game Saved", "Game has been saved successfully.")
+            except Exception as e:
+                messagebox.showerror("Error Saving Game", f"An error occurred while saving the game:\n{e}")
 
     def load_game(self):
         file_path = filedialog.askopenfilename(filetypes=[("MSPaint Risk Game files", "*.mprg")])
-        if not file_path:
-            return  # User cancelled file selection
-        try:
-            game_data = self.load_json_with_limit(file_path)
-        
-            # Load game metadata
-            self.game_name = game_data.get("game_name", "Untitled Game")
-            self.current_turn = game_data.get("current_turn", 0)
-        
-            # Load players
-            self.players = []
-            name_to_player = {}
-            for pdata in game_data.get("players", []):
-                player = Player(pdata["name"], tuple(pdata["color"]), pdata.get("faction"))
-                self.players.append(player)
-                name_to_player[player.name] = player
-        
-            # Set up alliances and NAPs
-            for pdata, player in zip(game_data.get("players", []), self.players):
-                player.allies = [name_to_player[name] for name in pdata.get("allies", [])]
-                player.naps = [name_to_player[name] for name in pdata.get("naps", [])]
-        
-            # Load game states (map images)
-            self.game_states = []
-            for state_data in game_data.get("game_states", []):
-                turn_number = state_data["turn_number"]
-                try:
-                    image_data = base64.b64decode(state_data["image_data"])
-                
-                    # Validate image data before processing
-                    if not self.is_valid_image(image_data):
-                        raise ValueError("Invalid image data")
-
-                    image = Image.open(io.BytesIO(image_data))
-                
-                    # Additional validation after opening
-                    if image.format not in ['PNG', 'BMP']:
-                        raise ValueError(f"Unsupported image format: {image.format}")
-
-                    temp_path = os.path.join(self.temp_dir, f"map_turn_{turn_number}.png")
-                    image.save(temp_path, format='PNG')  # Force save as PNG
-                    state = GameState(turn_number, temp_path)
+        if file_path:
+            try:
+                with open(file_path, 'r') as f:
+                    game_data = json.load(f)
+                self.game_name = game_data.get("game_name", "Untitled Game")
+                self.current_turn = game_data.get("current_turn", 0)
+                self.players = []
+                name_to_player = {}
+                for pdata in game_data.get("players", []):
+                    player = Player(pdata["name"], pdata["color"], pdata.get("faction"))
+                    self.players.append(player)
+                    name_to_player[player.name] = player
+                for pdata, player in zip(game_data.get("players", []), self.players):
+                    player.allies = [name_to_player[name] for name in pdata.get("allies", []) if name in name_to_player]
+                    player.naps = [name_to_player[name] for name in pdata.get("naps", []) if name in name_to_player]
+                self.game_states = []
+                for path in game_data.get("game_states", []):
+                    turn_number = int(os.path.splitext(os.path.basename(path))[0].split('_')[-1])
+                    state = GameState(turn_number, path)
                     self.game_states.append(state)
-                except (ValueError, IOError, SyntaxError) as e:
-                    messagebox.showwarning("Invalid Image Data", f"Map image for turn {turn_number} could not be loaded: {str(e)}")
-        
-            # Load the current map state
-            if self.game_states:
-                last_state = self.game_states[-1]
-                self.map_image = Image.open(last_state.map_image_path)
-                self.map_draw = ImageDraw.Draw(self.map_image)
-                if isinstance(self.current_screen, GameScreen):
-                    self.current_screen.display_map_image()
-                else:
-                    self.show_game_screen()
-            else:
-                messagebox.showwarning("No Map Data", "No valid map data found in the save file.")
-        
-            # Load roll table configuration
-            roll_table_data = game_data.get("roll_table", {})
-            if roll_table_data:
-                self.roll_table.number_values = roll_table_data.get("number_values", self.roll_table.number_values)
-                self.roll_table.repeats_config = roll_table_data.get("repeats_config", self.roll_table.repeats_config)
-                self.roll_table.palindromes_config = roll_table_data.get("palindromes_config", self.roll_table.palindromes_config)
-        
-            # Load roll results history
-            self.all_roll_results = game_data.get("all_roll_results", [])
-        
-            # Update UI elements
-            if hasattr(self, 'update_player_buttons'):
-                self.update_player_buttons()
-        
-            messagebox.showinfo("Game Loaded", "Game has been loaded successfully.")
-    
-        except ValueError as e:
-            messagebox.showerror("Error", str(e))
-        except json.JSONDecodeError:
-            messagebox.showerror("Error", "The selected file is not a valid MPRG file.")
-        except Exception as e:
-            messagebox.showerror("Error", f"An unexpected error occurred while loading the game: {str(e)}")
-
-    def load_json_with_limit(self, file_path, max_size=10 * 1024 * 1024):  # 10 MB limit
-        file_size = os.path.getsize(file_path)
-        if file_size > max_size:
-            raise ValueError(f"File size exceeds the maximum allowed size of {max_size} bytes")
-        with open(file_path, 'r') as f:
-            return json.load(f)
-
-    def is_valid_image(self, data):
-        try:
-            img = Image.open(io.BytesIO(data))
-            img.verify()
-            return True
-        except:
-            return False
+                if self.game_states:
+                    last_state = self.game_states[-1]
+                    self.map_image = Image.open(last_state.map_image_path)
+                    self.map_draw = ImageDraw.Draw(self.map_image)
+                    if isinstance(self.current_screen, GameScreen):
+                        self.current_screen.display_map_image()
+                    else:
+                        self.show_game_screen()
+                roll_table_data = game_data.get("roll_table", {})
+                if roll_table_data:
+                    self.roll_table.number_values = roll_table_data.get("number_values", self.roll_table.number_values)
+                    self.roll_table.repeats_config = roll_table_data.get("repeats_config", self.roll_table.repeats_config)
+                    self.roll_table.palindromes_config = roll_table_data.get("palindromes_config",
+                                                                             self.roll_table.palindromes_config)
+                self.all_roll_results = game_data.get("all_roll_results", [])
+                self.roll_mode = game_data.get("roll_mode", "application")  # Load the roll mode
+                messagebox.showinfo("Game Loaded", "Game has been loaded successfully.")
+            except Exception as e:
+                messagebox.showerror("Error Loading Game", f"An error occurred while loading the game:\n{e}")
 
     def export_map(self):
         if self.map_image is None:
@@ -282,22 +245,48 @@ class MSPaintRiskEditor:
                 if os.path.isfile(file_path):
                     os.unlink(file_path)
             except Exception as e:
-                print(f"Error deleting {file_path}: {e}")
-    
-        # Optionally, you can remove the temp_dir itself if it's empty
-        try:
-            os.rmdir(self.temp_dir)
-        except OSError:
-            pass  # Directory not empty or other error, ignore
+                print(e)
 
     def validate_player_data(self, name, color, faction):
-        if not isinstance(name, str) or len(name) > 50:
-            raise ValueError("Invalid player name")
-        if not isinstance(color, tuple) or len(color) != 3 or not all(isinstance(c, int) and 0 <= c <= 255 for c in color):
-            raise ValueError("Invalid color format")
-        if faction and (not isinstance(faction, str) or len(faction) > 50):
-            raise ValueError("Invalid faction name")
+        """
+        Validates the player data.
+        
+        Args:
+            name (str): Player's name.
+            color (tuple): Player's color as an (R, G, B) tuple.
+            faction (str or None): Player's faction.
+        
+        Returns:
+            tuple: (validated_name, color, faction)
+        
+        Raises:
+            ValueError: If any validation fails.
+        """
+        # Validate name
+        if not name or not name.strip():
+            raise ValueError("Player name cannot be empty.")
+        name = name.strip()
+        for player in self.players:
+            if player.name.lower() == name.lower():
+                raise ValueError(f"Player name '{name}' is already taken.")
+
+        # Validate color
+        if not isinstance(color, tuple) or len(color) != 3:
+            raise ValueError("Color must be a tuple of 3 integers (R, G, B).")
+        for component in color:
+            if not isinstance(component, int) or not (0 <= component <= 255):
+                raise ValueError("Each color component must be an integer between 0 and 255.")
+
+        # Validate faction
+        if faction:
+            faction = faction.strip()
+            if not faction:
+                faction = None
+        else:
+            faction = None
+
         return name, color, faction
+
 
 if __name__ == "__main__":
     root = tk.Tk()

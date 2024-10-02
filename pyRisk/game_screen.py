@@ -23,14 +23,12 @@ class GameScreen:
         self.sidebar.pack(fill=tk.Y, side=tk.LEFT)
         self.turn_label = tk.Label(self.sidebar, text=f"Turn: {self.app.current_turn}")
         self.turn_label.pack(pady=5)
-        # Store references to the buttons
         self.next_turn_button = tk.Button(self.sidebar, text="Next Turn", command=self.next_turn)
         self.next_turn_button.pack(pady=5)
         self.mode_button = tk.Button(self.sidebar, text="Switch to Erase Mode", command=self.toggle_mode)
         self.mode_button.pack(pady=5)
         self.undo_button = tk.Button(self.sidebar, text="Undo", command=self.undo)
         self.undo_button.pack(pady=5)
-        # Store reference to the "Select Player:" label
         self.select_player_label = tk.Label(self.sidebar, text="Select Player:")
         self.select_player_label.pack(pady=5)
         self.update_player_buttons()
@@ -38,7 +36,7 @@ class GameScreen:
     def update_player_buttons(self):
         # Remove existing player buttons and the "Select Player:" label if any
         for widget in self.sidebar.pack_slaves():
-            if widget not in [self.next_turn_button, self.mode_button, self.undo_button, self.turn_label]:
+            if widget not in [self.next_turn_button, self.mode_button, self.undo_button, self.turn_label, self.select_player_label]:
                 widget.destroy()
         # Re-add the "Select Player:" label
         self.select_player_label = tk.Label(self.sidebar, text="Select Player:")
@@ -48,8 +46,11 @@ class GameScreen:
             # Get remaining tiles for the player
             roll_info = self.app.player_rolls.get(player.name, ("", 0, 0))
             remaining_tiles = roll_info[2]
-            # Display player's name and remaining tiles
-            btn_text = f"{player.name} ({remaining_tiles})"
+            # Display player's name and remaining tiles based on mode
+            if self.app.roll_mode == 'external':
+                btn_text = f"{player.name}"
+            else:
+                btn_text = f"{player.name} ({remaining_tiles})"
             btn = tk.Button(self.sidebar, text=btn_text, command=lambda p=player: self.select_player(p))
             btn.pack(fill=tk.X, padx=5, pady=2)
             self.player_buttons.append(btn)
@@ -111,22 +112,24 @@ class GameScreen:
                 int(self.app.selected_player.color[2]),
                 255
             )
-            roll_info = self.app.player_rolls.get(self.app.selected_player.name, ("", 0, 0))
-            if roll_info[2] <= 0:
-                messagebox.showwarning("No Tiles Left",
-                                       f"{self.app.selected_player.name} has no tiles left to place.")
-                return
+            if self.app.roll_mode != 'external':
+                roll_info = self.app.player_rolls.get(self.app.selected_player.name, ("", 0, 0))
+                if roll_info[2] <= 0:
+                    messagebox.showwarning("No Tiles Left",
+                                           f"{self.app.selected_player.name} has no tiles left to place.")
+                    return
+                self.update_player_tiles(self.app.selected_player.name, -1)
             previous_owner = self.app.tile_owners.get((x, y))
             if previous_owner and previous_owner != self.app.selected_player.name:
                 self.update_player_tiles(previous_owner, 1)
             self.app.tile_owners[(x, y)] = self.app.selected_player.name
-            self.update_player_tiles(self.app.selected_player.name, -1)
         elif self.app.mode == 'erase':
             target_color = self.app.map_image.getpixel((x, y))
             replacement_color = self.app.original_map_image.getpixel((x, y))
             if (x, y) in self.app.tile_owners:
                 player_name = self.app.tile_owners.pop((x, y))
-                self.update_player_tiles(player_name, 1)
+                if self.app.roll_mode != 'external':
+                    self.update_player_tiles(player_name, 1)
         else:
             return
         flood_fill(self.app.map_image, x, y, target_color, replacement_color)
@@ -172,12 +175,13 @@ class GameScreen:
         self.app.current_turn += 1
         self.app.save_current_map_state()
         self.app.map_history.clear()
-        self.app.player_rolls.clear()
+        if self.app.roll_mode != 'external':
+            self.app.player_rolls.clear()
         self.turn_label.config(text=f"Turn: {self.app.current_turn}")
         # Update player list if the current screen has update_player_list method
         if hasattr(self.app.current_screen, 'update_player_list'):
             self.app.current_screen.update_player_list()
-        # Refresh player buttons to clear remaining tiles
+        # Refresh player buttons
         self.update_player_buttons()
 
     def destroy(self):

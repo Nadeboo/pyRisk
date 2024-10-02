@@ -21,6 +21,7 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="start_screen.py" />
     <Compile Include="game_state.py" />
     <Compile Include="player.py" />
     <Compile Include="pyRisk.py" />

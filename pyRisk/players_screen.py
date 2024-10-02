@@ -1,6 +1,9 @@
+# players_screen.py
+
 import tkinter as tk
 from tkinter import simpledialog, colorchooser, messagebox
 from player import Player  # Import the Player class
+
 
 class PlayersScreen:
     def __init__(self, parent, app):
@@ -11,14 +14,14 @@ class PlayersScreen:
         self.setup_widgets()
 
     def setup_widgets(self):
-        tk.Label(self.frame, text="Players:").pack(pady=5)
+        tk.Label(self.frame, text="Players:", font=("Arial", 16)).pack(pady=10)
         self.player_frame = tk.Frame(self.frame)
         self.player_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         btn_frame = tk.Frame(self.frame)
         btn_frame.pack(pady=5)
         for text, cmd in [("Add Player", self.add_player), ("Edit Player", self.edit_player),
                           ("Remove Player", self.remove_player)]:
-            tk.Button(btn_frame, text=text, command=cmd).pack(side=tk.LEFT, padx=5)
+            tk.Button(btn_frame, text=text, command=cmd, width=15).pack(side=tk.LEFT, padx=5)
         self.selected_player = None
         self.selected_player_label = None
         self.update_player_list()
@@ -27,8 +30,8 @@ class PlayersScreen:
         # Clear existing widgets
         for widget in self.player_frame.winfo_children():
             widget.destroy()
-        # Define a larger font (increase size by 4x)
-        large_font = ('TkDefaultFont', 36)  # Adjust the size as needed
+        # Define a larger font (increase size as needed)
+        large_font = ('TkDefaultFont', 12)  # Adjust the size as needed
         self.selected_player_label = None  # Reset selection
         for player in self.app.players:
             # Create a frame for each player
@@ -58,11 +61,13 @@ class PlayersScreen:
 
     def add_player(self):
         name = simpledialog.askstring("Player Name", "Enter player name:")
+
         if name:
             color = colorchooser.askcolor(title="Choose player color")
             if color[0]:
                 faction = simpledialog.askstring("Faction", "Enter faction name (optional):")
                 try:
+                    # Validate player data using the main app's method
                     name, color, faction = self.app.validate_player_data(name, color[0], faction)
                     player = Player(name, color, faction)
                     self.app.players.append(player)
@@ -82,6 +87,7 @@ class PlayersScreen:
                     faction = simpledialog.askstring("Faction", "Edit faction name (optional):",
                                                      initialvalue=player.faction)
                     try:
+                        # Validate edited player data
                         name, color, faction = self.app.validate_player_data(name, color[0], faction)
                         player.name = name
                         player.color = color
@@ -112,5 +118,4 @@ class PlayersScreen:
             messagebox.showwarning("No Selection", "Please select a player to remove.")
 
     def destroy(self):
-        """Destroy the screen's widgets and perform any necessary cleanup."""
         self.frame.destroy()

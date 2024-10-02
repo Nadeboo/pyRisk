@@ -1,26 +1,41 @@
-# roll_table.py
+# models/roll_table.py
 
 import random
+from typing import Dict, Any
 import tkinter as tk
 from tkinter import messagebox
 
+
 class RollTable:
     def __init__(self):
+        """
+        Initialize a RollTable instance with default configurations.
+        """
         # Default values for numbers 1-9
-        self.number_values = {str(i): 1 for i in range(1, 10)}  # Default to 1 tile per number
+        self.number_values: Dict[str, int] = {str(i): 1 for i in range(1, 10)}  # Default to 1 tile per number
+        
         # Configurations for repeats and palindromes
-        self.repeats_config = {
+        self.repeats_config: Dict[str, Dict[str, Any]] = {
             '2': {'type': 'add', 'value': 0},  # Doubles
             '3': {'type': 'add', 'value': 0},  # Triples
             # Add more repeats as needed
         }
-        self.palindromes_config = {
+        self.palindromes_config: Dict[str, Dict[str, Any]] = {
             '2': {'type': 'add', 'value': 0},  # Palindromes of length 2
             '3': {'type': 'add', 'value': 0},  # Palindromes of length 3
             # Add more palindrome lengths as needed
         }
 
-    def calculate_tiles(self, roll_value):
+    def calculate_tiles(self, roll_value: int) -> int:
+        """
+        Calculate the number of tiles based on the roll value.
+
+        Args:
+            roll_value (int): The rolled number.
+
+        Returns:
+            int: Number of tiles allocated.
+        """
         roll_str = str(roll_value)
         tiles = 0
 
@@ -29,23 +44,34 @@ class RollTable:
         if repeat_length >= 2:
             repeat_config = self.repeats_config.get(str(repeat_length))
             if repeat_config:
-                tiles += self._apply_config(self.number_values.get(repeat_value, 1) * repeat_length, repeat_config)
-            return tiles  # Return early if we found a repeat
+                base_tiles = self.number_values.get(repeat_value, 1) * repeat_length
+                tiles += self._apply_config(base_tiles, repeat_config)
+            return tiles  # Return early if a repeat was found
 
         # Check for palindromes at the end
         palindrome_length = self._get_end_palindrome_length(roll_str)
         if palindrome_length >= 2:
             palindrome_config = self.palindromes_config.get(str(palindrome_length))
             if palindrome_config:
-                tiles += self._apply_config(self.number_values.get(roll_str[-1], 1) * palindrome_length, palindrome_config)
-            return tiles  # Return early if we found a palindrome
+                base_tiles = self.number_values.get(roll_str[-1], 1) * palindrome_length
+                tiles += self._apply_config(base_tiles, palindrome_config)
+            return tiles  # Return early if a palindrome was found
 
         # If no repeats or palindromes, just count the last digit
         tiles += self.number_values.get(roll_str[-1], 1)  # Default to 1 if the digit is not in number_values
 
         return tiles
 
-    def _get_longest_repeat(self, roll_str):
+    def _get_longest_repeat(self, roll_str: str) -> (int, str):
+        """
+        Get the longest sequence of repeating digits at the end of the roll string.
+
+        Args:
+            roll_str (str): The rolled number as a string.
+
+        Returns:
+            tuple: (repeat_length, repeat_value)
+        """
         if not roll_str:
             return 0, ''
 
@@ -58,26 +84,54 @@ class RollTable:
             if roll_str[i] == repeat_value:
                 repeat_length += 1
             else:
-                break  # Stop as soon as we find a non-repeating digit
+                break  # Stop as soon as a non-repeating digit is found
 
-        # If the repeat length is 1, it means no repeat was found
+        # If the repeat length is 1, no repeat was found
         if repeat_length == 1:
             return 0, ''
         else:
             return repeat_length, repeat_value
 
-    def _get_end_palindrome_length(self, roll_str):
+    def _get_end_palindrome_length(self, roll_str: str) -> int:
+        """
+        Determine the length of the palindrome at the end of the roll string.
+
+        Args:
+            roll_str (str): The rolled number as a string.
+
+        Returns:
+            int: Length of the palindrome, or 0 if none found.
+        """
         for i in range(len(roll_str), 1, -1):
             if self._is_palindrome(roll_str[-i:]):
                 return i
         return 0
 
-    def _is_palindrome(self, s):
+    def _is_palindrome(self, s: str) -> bool:
+        """
+        Check if a string is a palindrome.
+
+        Args:
+            s (str): The string to check.
+
+        Returns:
+            bool: True if palindrome, False otherwise.
+        """
         return s == s[::-1]
 
-    def _apply_config(self, base_tiles, config):
-        config_type = config['type']
-        value = config['value']
+    def _apply_config(self, base_tiles: int, config: Dict[str, Any]) -> int:
+        """
+        Apply the configuration to the base tile count.
+
+        Args:
+            base_tiles (int): The base number of tiles.
+            config (dict): Configuration dictionary with 'type' and 'value'.
+
+        Returns:
+            int: The adjusted number of tiles.
+        """
+        config_type = config.get('type', 'add')
+        value = config.get('value', 0)
         if config_type == 'add':
             return base_tiles + value
         elif config_type == 'multiply':
@@ -87,26 +141,22 @@ class RollTable:
         else:
             return base_tiles  # Default to no change
 
-    def _get_repeat_length(self, roll_str):
-        # Find the maximum number of consecutive repeating digits
-        max_repeat = 1
-        current_repeat = 1
-        for i in range(1, len(roll_str)):
-            if roll_str[i] == roll_str[i - 1]:
-                current_repeat += 1
-                max_repeat = max(max_repeat, current_repeat)
-            else:
-                current_repeat = 1
-        return max_repeat
+    def roll_number(self) -> int:
+        """
+        Simulate rolling a random number.
 
-    def _is_palindrome(self, roll_str):
-        return roll_str == roll_str[::-1]
-
-    def roll_number(self):
-        # Roll a random number (e.g., 1 to 99999)
+        Returns:
+            int: A random number between 1 and 99999.
+        """
         return random.randint(1, 99999)
 
-    def open_configuration_window(self, master):
+    def open_configuration_window(self, master: tk.Tk) -> None:
+        """
+        Open a GUI window to configure the roll table settings.
+
+        Args:
+            master (tk.Tk): The parent Tkinter window.
+        """
         roll_window = tk.Toplevel(master)
         roll_window.title("Configure Roll Table")
 
@@ -128,14 +178,14 @@ class RollTable:
             tk.Label(roll_window, text=f"{repeat}-digit Repeats").grid(row=row, column=0, columnspan=2)
 
             # Type option
-            tk.Label(roll_window, text="Type:").grid(row=row+1, column=0)
+            tk.Label(roll_window, text="Type:").grid(row=row + 1, column=0)
             type_var = tk.StringVar(value=self.repeats_config.get(repeat, {'type': 'add'})['type'])
-            tk.OptionMenu(roll_window, type_var, 'add', 'multiply', 'replace').grid(row=row+1, column=1)
+            tk.OptionMenu(roll_window, type_var, 'add', 'multiply', 'replace').grid(row=row + 1, column=1)
 
             # Value
-            tk.Label(roll_window, text="Value:").grid(row=row+2, column=0)
+            tk.Label(roll_window, text="Value:").grid(row=row + 2, column=0)
             value_var = tk.IntVar(value=self.repeats_config.get(repeat, {'value': 0})['value'])
-            tk.Entry(roll_window, textvariable=value_var).grid(row=row+2, column=1)
+            tk.Entry(roll_window, textvariable=value_var).grid(row=row + 2, column=1)
 
             repeat_vars[repeat] = {'type': type_var, 'value': value_var}
 
@@ -148,14 +198,14 @@ class RollTable:
             tk.Label(roll_window, text=f"Length {length} Palindromes").grid(row=row, column=0, columnspan=2)
 
             # Type option
-            tk.Label(roll_window, text="Type:").grid(row=row+1, column=0)
+            tk.Label(roll_window, text="Type:").grid(row=row + 1, column=0)
             type_var = tk.StringVar(value=self.palindromes_config.get(length, {'type': 'add'})['type'])
-            tk.OptionMenu(roll_window, type_var, 'add', 'multiply', 'replace').grid(row=row+1, column=1)
+            tk.OptionMenu(roll_window, type_var, 'add', 'multiply', 'replace').grid(row=row + 1, column=1)
 
             # Value
-            tk.Label(roll_window, text="Value:").grid(row=row+2, column=0)
+            tk.Label(roll_window, text="Value:").grid(row=row + 2, column=0)
             value_var = tk.IntVar(value=self.palindromes_config.get(length, {'value': 0})['value'])
-            tk.Entry(roll_window, textvariable=value_var).grid(row=row+2, column=1)
+            tk.Entry(roll_window, textvariable=value_var).grid(row=row + 2, column=1)
 
             palindrome_vars[length] = {'type': type_var, 'value': value_var}
 

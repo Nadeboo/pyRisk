@@ -7,7 +7,7 @@ class Player:
         if not isinstance(color, tuple) or len(color) != 3:
             raise ValueError("Invalid color format")
         self.name = name
-        self.color = color
+        self.color = tuple(color)  # Ensure color is stored as a tuple
         self.faction = faction
         self.allies = []
         self.naps = []

@@ -83,7 +83,16 @@ class GameScreen:
             if owner:
                 player = next((p for p in self.app.players if p.name == owner), None)
                 if player:
-                    draw.point((x, y), fill=player.color)
+                    # Ensure player.color is a four-component tuple (RGBA)
+                    if len(player.color) == 3:
+                        player_color = (*player.color, 255)  # Add full opacity
+                    elif len(player.color) == 4:
+                        player_color = player.color
+                    else:
+                        messagebox.showerror("Invalid Color Format",
+                                             f"Player '{player.name}' has an invalid color format: {player.color}")
+                        continue
+                    draw.point((x, y), fill=player_color)
         self.app.map_photo = ImageTk.PhotoImage(display_image)
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, image=self.app.map_photo, anchor=tk.NW)
@@ -195,8 +204,11 @@ class GameScreen:
         for i in range(tiles):
             x, y = available_tiles[i]
             self.app.tile_owners[(x, y)] = player_name
-            self.app.map_draw.point((x, y), fill=player.color)
+            # Convert to RGBA by adding full opacity
+            player_color = (*player.color, 255) if len(player.color) == 3 else player.color
+            self.app.map_draw.point((x, y), fill=player_color)
         self.display_map_image()
+
 
     def destroy(self):
         self.canvas.unbind("<Button-1>")

@@ -20,10 +20,12 @@ class StartScreen:
 
     def set_external_mode(self):
         self.app.roll_mode = 'external'
+        self.app.enable_import_map()
         self.app.show_game_screen()
 
     def set_application_mode(self):
         self.app.roll_mode = 'application'
+        self.app.enable_import_map()
         self.app.show_game_screen()
 
     def destroy(self):

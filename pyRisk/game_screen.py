@@ -34,7 +34,7 @@ class GameScreen:
         self.update_player_buttons()
 
     def update_player_buttons(self):
-        # Remove existing player buttons and the "Select Player:" label if any
+        # Remove existing player buttons except fixed buttons
         for widget in self.sidebar.pack_slaves():
             if widget not in [self.next_turn_button, self.mode_button, self.undo_button, self.turn_label, self.select_player_label]:
                 widget.destroy()
@@ -43,14 +43,7 @@ class GameScreen:
         self.select_player_label.pack(pady=5)
         self.player_buttons = []
         for player in self.app.players:
-            # Get remaining tiles for the player
-            roll_info = self.app.player_rolls.get(player.name, ("", 0, 0))
-            remaining_tiles = roll_info[2]
-            # Display player's name and remaining tiles based on mode
-            if self.app.roll_mode == 'external':
-                btn_text = f"{player.name}"
-            else:
-                btn_text = f"{player.name} ({remaining_tiles})"
+            btn_text = f"{player.name}"
             btn = tk.Button(self.sidebar, text=btn_text, command=lambda p=player: self.select_player(p))
             btn.pack(fill=tk.X, padx=5, pady=2)
             self.player_buttons.append(btn)
@@ -62,12 +55,11 @@ class GameScreen:
 
     def highlight_selected_player_button(self):
         for btn in self.player_buttons:
-            if btn.winfo_exists():
-                btn_player_name = btn['text'].split(' (')[0]  # Extract player name from button text
-                if self.app.selected_player and btn_player_name == self.app.selected_player.name:
-                    btn.config(relief=tk.SUNKEN)
-                else:
-                    btn.config(relief=tk.RAISED)
+            btn_player_name = btn['text']
+            if self.app.selected_player and btn_player_name == self.app.selected_player.name:
+                btn.config(relief=tk.SUNKEN)
+            else:
+                btn.config(relief=tk.RAISED)
 
     def setup_canvas(self):
         self.canvas_frame = tk.Frame(self.frame)
@@ -82,7 +74,17 @@ class GameScreen:
         self.canvas.bind('<Configure>', self.on_canvas_configure)
 
     def display_map_image(self):
-        self.app.map_photo = ImageTk.PhotoImage(self.app.map_image)
+        if self.app.map_image is None:
+            return
+        # Create a copy to draw ownership colors
+        display_image = self.app.map_image.copy()
+        draw = ImageDraw.Draw(display_image)
+        for (x, y), owner in self.app.tile_owners.items():
+            if owner:
+                player = next((p for p in self.app.players if p.name == owner), None)
+                if player:
+                    draw.point((x, y), fill=player.color)
+        self.app.map_photo = ImageTk.PhotoImage(display_image)
         self.canvas.delete("all")
         self.canvas.create_image(0, 0, image=self.app.map_photo, anchor=tk.NW)
         self.canvas.config(scrollregion=self.canvas.bbox(tk.ALL))
@@ -134,10 +136,8 @@ class GameScreen:
             return
         flood_fill(self.app.map_image, x, y, target_color, replacement_color)
         self.display_map_image()
-        # Update player list if the current screen has update_player_list method
         if hasattr(self.app.current_screen, 'update_player_list'):
             self.app.current_screen.update_player_list()
-        # Update player buttons
         self.update_player_buttons()
 
     def update_player_tiles(self, player_name, change):
@@ -164,11 +164,9 @@ class GameScreen:
         self.app.map_image = self.app.map_history.pop()
         self.app.map_draw = ImageDraw.Draw(self.app.map_image)
         self.display_map_image()
-        # Refresh player buttons to update remaining tiles display
         self.update_player_buttons()
 
     def next_turn(self):
-        """Advance to the next turn and update necessary components."""
         if self.app.map_image is None:
             messagebox.showwarning("No Map Loaded", "Please import a map before proceeding to the next turn.")
             return
@@ -178,11 +176,27 @@ class GameScreen:
         if self.app.roll_mode != 'external':
             self.app.player_rolls.clear()
         self.turn_label.config(text=f"Turn: {self.app.current_turn}")
-        # Update player list if the current screen has update_player_list method
         if hasattr(self.app.current_screen, 'update_player_list'):
             self.app.current_screen.update_player_list()
-        # Refresh player buttons
         self.update_player_buttons()
+
+    def assign_tiles_to_player(self, player_name, tiles):
+        if self.app.map_image is None:
+            messagebox.showwarning("No Map Loaded", "Please import a map before assigning tiles.")
+            return
+        player = next((p for p in self.app.players if p.name == player_name), None)
+        if not player:
+            messagebox.showerror("Player Not Found", f"Player '{player_name}' not found.")
+            return
+        available_tiles = [pos for pos, owner in self.app.tile_owners.items() if owner is None or owner == player_name]
+        if len(available_tiles) < tiles:
+            messagebox.showwarning("Insufficient Tiles", f"Not enough available tiles to assign {tiles} tiles to {player_name}.")
+            tiles = len(available_tiles)
+        for i in range(tiles):
+            x, y = available_tiles[i]
+            self.app.tile_owners[(x, y)] = player_name
+            self.app.map_draw.point((x, y), fill=player.color)
+        self.display_map_image()
 
     def destroy(self):
         self.canvas.unbind("<Button-1>")

@@ -1,4 +1,4 @@
-# mspaintrisk_editor.py
+# pyRisk.py
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, colorchooser
@@ -46,12 +46,12 @@ class MSPaintRiskEditor:
         self.current_screen = None
         self.player_rolls = {}
         self.roll_results = []
-        self.tile_owners = {}
+        self.tile_owners = {}  # Initialize tile ownership
         self.mode = 'color'
         self.selected_player = None
         if not os.path.exists(self.temp_dir):
             os.makedirs(self.temp_dir)
-
+            
     def setup_menu(self):
         self.menu_bar = tk.Menu(self.master)
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -100,10 +100,8 @@ class MSPaintRiskEditor:
         self.switch_screen(AlliancesScreen)
 
     def show_roll_screen(self):
-        if self.roll_mode == 'external':
-            messagebox.showinfo("Disabled", "Rolling is disabled in external roll mode.")
-            return
         self.switch_screen(RollScreen)
+
 
     def switch_screen(self, screen_class):
         # Destroy current screen if it exists
@@ -125,12 +123,15 @@ class MSPaintRiskEditor:
             self.map_image = Image.open(file_path).convert("RGBA")
             self.map_draw = ImageDraw.Draw(self.map_image)
             self.original_map_image = self.map_image.copy()
+            width, height = self.map_image.size
+            self.tile_owners = {(x, y): None for x in range(width) for y in range(height)}
             if isinstance(self.current_screen, GameScreen):
                 self.current_screen.display_map_image()
             else:
                 self.show_game_screen()
             self.save_current_map_state()
             self.map_history.clear()
+
 
     def save_current_map_state(self):
         if self.map_image is None:
@@ -163,8 +164,9 @@ class MSPaintRiskEditor:
                     "repeats_config": self.roll_table.repeats_config,
                     "palindromes_config": self.roll_table.palindromes_config
                 },
-                "all_roll_results": self.all_roll_results,  # Save all roll results
-                "roll_mode": self.roll_mode  # Save the roll mode
+                "all_roll_results": self.all_roll_results,
+                "roll_mode": self.roll_mode,
+                "tile_owners": {f"{x},{y}": owner for (x, y), owner in self.tile_owners.items()}
             }
             try:
                 with open(file_path, 'w') as f:
@@ -172,7 +174,7 @@ class MSPaintRiskEditor:
                 messagebox.showinfo("Game Saved", "Game has been saved successfully.")
             except Exception as e:
                 messagebox.showerror("Error Saving Game", f"An error occurred while saving the game:\n{e}")
-
+                
     def load_game(self):
         file_path = filedialog.askopenfilename(filetypes=[("MSPaint Risk Game files", "*.mprg")])
         if file_path:
@@ -197,8 +199,9 @@ class MSPaintRiskEditor:
                     self.game_states.append(state)
                 if self.game_states:
                     last_state = self.game_states[-1]
-                    self.map_image = Image.open(last_state.map_image_path)
+                    self.map_image = Image.open(last_state.map_image_path).convert("RGBA")
                     self.map_draw = ImageDraw.Draw(self.map_image)
+                    self.original_map_image = self.map_image.copy()
                     if isinstance(self.current_screen, GameScreen):
                         self.current_screen.display_map_image()
                     else:
@@ -207,13 +210,21 @@ class MSPaintRiskEditor:
                 if roll_table_data:
                     self.roll_table.number_values = roll_table_data.get("number_values", self.roll_table.number_values)
                     self.roll_table.repeats_config = roll_table_data.get("repeats_config", self.roll_table.repeats_config)
-                    self.roll_table.palindromes_config = roll_table_data.get("palindromes_config",
-                                                                             self.roll_table.palindromes_config)
+                    self.roll_table.palindromes_config = game_data.get("roll_table", {}).get("palindromes_config",
+                                                                                             self.roll_table.palindromes_config)
                 self.all_roll_results = game_data.get("all_roll_results", [])
-                self.roll_mode = game_data.get("roll_mode", "application")  # Load the roll mode
+                self.roll_mode = game_data.get("roll_mode", "application")
+                # Load tile ownership
+                tile_owners_data = game_data.get("tile_owners", {})
+                self.tile_owners = {}
+                for pos_str, owner in tile_owners_data.items():
+                    x, y = map(int, pos_str.split(','))
+                    self.tile_owners[(x, y)] = owner
                 messagebox.showinfo("Game Loaded", "Game has been loaded successfully.")
             except Exception as e:
                 messagebox.showerror("Error Loading Game", f"An error occurred while loading the game:\n{e}")
+
+
 
     def export_map(self):
         if self.map_image is None:

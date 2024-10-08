@@ -19,6 +19,8 @@ from players_screen import PlayersScreen
 from alliances_screen import AlliancesScreen
 from roll_screen import RollScreen
 from start_screen import StartScreen  # Import StartScreen class
+from rules_screen import RulesScreen, Rule
+from rule_manager import RuleManager, setup_fortification_rule
 
 
 class MSPaintRiskEditor:
@@ -55,6 +57,9 @@ class MSPaintRiskEditor:
         self.selected_player = None
         if not os.path.exists(self.temp_dir):
             os.makedirs(self.temp_dir)
+        self.fortified_tiles = {}
+        self.rule_manager = RuleManager()
+        setup_fortification_rule(self.rule_manager)
             
     def setup_menu(self):
         self.menu_bar = tk.Menu(self.master)
@@ -66,7 +71,7 @@ class MSPaintRiskEditor:
         self.file_menu.add_command(label="Save Game", command=self.save_game)
         self.file_menu.add_command(label="Load Game", command=self.load_game)
         self.file_menu.add_separator()
-        self.file_menu.add_command(label="Exit", command=self.on_exit)
+        self.file_menu.add_command(label="Exit", command=self.on_closing)
         self.menu_bar.add_cascade(label="File", menu=self.file_menu)
         self.master.config(menu=self.menu_bar)
 
@@ -87,9 +92,13 @@ class MSPaintRiskEditor:
         for text, cmd in [("Game", self.show_game_screen),
                           ("Players", self.show_players_screen),
                           ("Alliances", self.show_alliances_screen),
-                          ("Roll", self.show_roll_screen)]:
+                          ("Roll", self.show_roll_screen),
+                          ("Rules", self.show_rules_screen)]:  # Add Rules button
             btn = tk.Button(self.toolbar, text=text, command=cmd)
             btn.pack(side=tk.LEFT, padx=2, pady=2)
+
+    def show_rules_screen(self):
+        self.switch_screen(RulesScreen)
 
     def show_start_screen(self):
         self.switch_screen(StartScreen)
@@ -322,7 +331,7 @@ class MSPaintRiskEditor:
             frames[0].save(file_path, save_all=True, append_images=frames[1:], duration=500, loop=0)
             messagebox.showinfo("GIF Exported", "Game progression GIF has been exported successfully.")
 
-    def on_exit(self):
+    def on_closing(self):
         self.cleanup()
         self.master.quit()
 
@@ -344,7 +353,7 @@ class MSPaintRiskEditor:
                 self.cleanup()
                 self.master.destroy()
                 
-    def on_exit(self):
+    def on_closing(self):
         self.on_closing()
         
     def validate_player_data(self, name, color, faction):
@@ -386,10 +395,21 @@ class MSPaintRiskEditor:
             faction = None
 
         return name, color, faction
-
+    
+    def capture_tile(self, x, y, new_owner):
+        old_owner = self.tile_owners.get((x, y))
+        if old_owner and old_owner != new_owner:
+            if (x, y) in self.fortified_tiles:
+                # Capturing a fortified tile costs 2 tiles
+                self.update_player_tiles(new_owner, -2)
+                del self.fortified_tiles[(x, y)]
+            else:
+                # Normal capture costs 1 tile
+                self.update_player_tiles(new_owner, -1)
+        self.tile_owners[(x, y)] = new_owner
 
 if __name__ == "__main__":
     root = tk.Tk()
     app = MSPaintRiskEditor(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_exit)
+    root.protocol("WM_DELETE_WINDOW", app.on_closing)
     root.mainloop()

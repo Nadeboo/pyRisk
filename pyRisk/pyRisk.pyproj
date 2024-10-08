@@ -21,6 +21,8 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="rules_screen.py" />
+    <Compile Include="rule_manager.py" />
     <Compile Include="start_screen.py" />
     <Compile Include="game_state.py" />
     <Compile Include="player.py" />

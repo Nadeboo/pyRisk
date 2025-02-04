@@ -1,4 +1,3 @@
-# mspaintrisk_editor.py
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, colorchooser
@@ -49,7 +48,6 @@ class MSPaintRiskEditor:
         self.current_screen = None
         self.player_rolls = {}
         self.roll_results = []
-        self.tile_owners = {}
         self.mode = 'color'
         self.selected_player = None
         self.units = []  # Initialize empty units list
@@ -58,7 +56,7 @@ class MSPaintRiskEditor:
         # Initialize Tregonia-specific variables here if needed
         if not os.path.exists(self.temp_dir):
             os.makedirs(self.temp_dir)
-
+            
     def setup_menu(self):
         self.menu_bar = tk.Menu(self.master)
         self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
@@ -87,16 +85,8 @@ class MSPaintRiskEditor:
         for widget in self.toolbar.winfo_children():
             widget.destroy()
         # Create toolbar buttons
-        buttons = [("Game", self.show_game_screen),
-                  ("Players", self.show_players_screen),
-                  ("Alliances", self.show_alliances_screen),
-                  ("Roll", self.show_roll_screen)]
-        
-        # Add Units button only in Tregonia mode
-        if self.roll_mode == 'tregonia':
-            buttons.append(("Units", self.show_units_screen))
-            
-        for text, cmd in buttons:
+                          ("Players", self.show_players_screen),
+                          ("Alliances", self.show_alliances_screen),
             btn = tk.Button(self.toolbar, text=text, command=cmd)
             btn.pack(side=tk.LEFT, padx=2, pady=2)
 
@@ -137,26 +127,21 @@ class MSPaintRiskEditor:
         # Initialize new screen
         self.current_screen = screen_class(self.content_frame, self)
 
-    def save_game(self):
-        """Delegate save operation to SaveLoadManager"""
-        SaveLoadManager.save_game(self)
-
-    def load_game(self):
-        """Delegate load operation to SaveLoadManager"""
-        SaveLoadManager.load_game(self)
-
     def import_map(self):
         file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png;*.jpg;*.jpeg")])
         if file_path:
             self.map_image = Image.open(file_path).convert("RGBA")
             self.map_draw = ImageDraw.Draw(self.map_image)
             self.original_map_image = self.map_image.copy()
+            width, height = self.map_image.size
+            self.tile_owners = {(x, y): None for x in range(width) for y in range(height)}
             if isinstance(self.current_screen, GameScreen):
                 self.current_screen.display_map_image()
             else:
                 self.show_game_screen()
             self.save_current_map_state()
             self.map_history.clear()
+
 
     def save_current_map_state(self):
         if self.map_image is None:
@@ -165,6 +150,91 @@ class MSPaintRiskEditor:
         self.map_image.save(filename)
         game_state = GameState(self.current_turn, filename)
         self.game_states.append(game_state)
+
+    def save_game(self):
+        if not self.game_states:
+            messagebox.showwarning("No Game to Save", "No game data to save.")
+            return
+        file_path = filedialog.asksaveasfilename(defaultextension=".mprg",
+                                                 filetypes=[("MSPaint Risk Game files", "*.mprg")])
+        if file_path:
+            game_data = {
+                "game_name": self.game_name,
+                "current_turn": self.current_turn,
+                "players": [{
+                    "name": player.name,
+                    "color": player.color,
+                    "faction": player.faction,
+                    "allies": [ally.name for ally in player.allies],
+                    "naps": [nap.name for nap in player.naps]
+                } for player in self.players],
+                "game_states": [state.map_image_path for state in self.game_states],
+                "roll_table": {
+                    "number_values": self.roll_table.number_values,
+                    "repeats_config": self.roll_table.repeats_config,
+                    "palindromes_config": self.roll_table.palindromes_config
+                },
+                "all_roll_results": self.all_roll_results,
+                "roll_mode": self.roll_mode,
+                "tile_owners": {f"{x},{y}": owner for (x, y), owner in self.tile_owners.items()}
+            }
+            try:
+                with open(file_path, 'w') as f:
+                    json.dump(game_data, f)
+                messagebox.showinfo("Game Saved", "Game has been saved successfully.")
+            except Exception as e:
+                messagebox.showerror("Error Saving Game", f"An error occurred while saving the game:\n{e}")
+                
+    def load_game(self):
+        file_path = filedialog.askopenfilename(filetypes=[("MSPaint Risk Game files", "*.mprg")])
+        if file_path:
+            try:
+                with open(file_path, 'r') as f:
+                    game_data = json.load(f)
+                self.game_name = game_data.get("game_name", "Untitled Game")
+                self.current_turn = game_data.get("current_turn", 0)
+                self.players = []
+                name_to_player = {}
+                for pdata in game_data.get("players", []):
+                    player = Player(pdata["name"], pdata["color"], pdata.get("faction"))
+                    self.players.append(player)
+                    name_to_player[player.name] = player
+                for pdata, player in zip(game_data.get("players", []), self.players):
+                    player.allies = [name_to_player[name] for name in pdata.get("allies", []) if name in name_to_player]
+                    player.naps = [name_to_player[name] for name in pdata.get("naps", []) if name in name_to_player]
+                self.game_states = []
+                for path in game_data.get("game_states", []):
+                    turn_number = int(os.path.splitext(os.path.basename(path))[0].split('_')[-1])
+                    state = GameState(turn_number, path)
+                    self.game_states.append(state)
+                if self.game_states:
+                    last_state = self.game_states[-1]
+                    self.map_image = Image.open(last_state.map_image_path).convert("RGBA")
+                    self.map_draw = ImageDraw.Draw(self.map_image)
+                    self.original_map_image = self.map_image.copy()
+                    if isinstance(self.current_screen, GameScreen):
+                        self.current_screen.display_map_image()
+                    else:
+                        self.show_game_screen()
+                roll_table_data = game_data.get("roll_table", {})
+                if roll_table_data:
+                    self.roll_table.number_values = roll_table_data.get("number_values", self.roll_table.number_values)
+                    self.roll_table.repeats_config = roll_table_data.get("repeats_config", self.roll_table.repeats_config)
+                    self.roll_table.palindromes_config = game_data.get("roll_table", {}).get("palindromes_config",
+                                                                                             self.roll_table.palindromes_config)
+                self.all_roll_results = game_data.get("all_roll_results", [])
+                self.roll_mode = game_data.get("roll_mode", "application")
+                # Load tile ownership
+                tile_owners_data = game_data.get("tile_owners", {})
+                self.tile_owners = {}
+                for pos_str, owner in tile_owners_data.items():
+                    x, y = map(int, pos_str.split(','))
+                    self.tile_owners[(x, y)] = owner
+                messagebox.showinfo("Game Loaded", "Game has been loaded successfully.")
+            except Exception as e:
+                messagebox.showerror("Error Loading Game", f"An error occurred while loading the game:\n{e}")
+
+
 
     def export_map(self):
         if self.map_image is None:

@@ -20,7 +20,10 @@ class RollTable:
             # Add more palindrome lengths as needed
         }
 
-    def calculate_tiles(self, roll_value):
+    def calculate_tiles(self, roll_value, mode='application'):
+        if mode == 'tregonia':
+            return self._calculate_tregonia_tiles(roll_value)
+        
         roll_str = str(roll_value)
         tiles = 0
 
@@ -44,6 +47,41 @@ class RollTable:
         tiles += self.number_values.get(roll_str[-1], 1)  # Default to 1 if the digit is not in number_values
 
         return tiles
+
+    def _calculate_tregonia_tiles(self, roll_value):
+        roll_str = str(roll_value)
+        last_digit = int(roll_str[-1])
+        
+        # First check for special patterns (trips, dubs, palindromes)
+        repeat_length, _ = self._get_longest_repeat(roll_str)
+        
+        # Check for long repeats (more than 3 digits)
+        if repeat_length > 3:
+            return 13
+        
+        # Check for long palindromes (more than 4 digits)
+        if len(roll_str) > 4 and self._is_palindrome(roll_str[-5:]):  
+            return 13
+            
+        # Check for trips or 4-digit palindromes
+        if repeat_length == 3 or (len(roll_str) >= 4 and self._is_palindrome(roll_str[-4:])):
+            return 11
+            
+        # Check for dubs
+        if repeat_length == 2:
+            return 9
+            
+        # Base tile calculations based on last digit
+        if last_digit in [1, 2]:
+            return 3
+        elif last_digit in [3, 4]:
+            return 4
+        elif last_digit in [5, 6]:
+            return 5
+        elif last_digit in [7, 8]:
+            return 6
+        else:  # 9 or 0
+            return 7
 
     def _get_longest_repeat(self, roll_str):
         if not roll_str:
@@ -99,14 +137,16 @@ class RollTable:
                 current_repeat = 1
         return max_repeat
 
-    def _is_palindrome(self, roll_str):
-        return roll_str == roll_str[::-1]
-
     def roll_number(self):
         # Roll a random number (e.g., 1 to 99999)
         return random.randint(1, 99999)
 
     def open_configuration_window(self, master):
+        if hasattr(master, 'app') and getattr(master.app, 'roll_mode', None) == 'tregonia':
+            messagebox.showinfo("Configuration Disabled", 
+                              "Roll table configuration is not available in Tregonia mode as it uses a fixed rule set.")
+            return
+            
         roll_window = tk.Toplevel(master)
         roll_window.title("Configure Roll Table")
 

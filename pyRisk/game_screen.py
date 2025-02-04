@@ -2,16 +2,18 @@
 
 import tkinter as tk
 from tkinter import messagebox
-from PIL import ImageTk, ImageDraw
+from PIL import ImageTk, ImageDraw, ImageFont
 from utils import flood_fill
 
 
 class GameScreen:
     def __init__(self, parent, app):
         self.parent = parent
-        self.app = app  # Reference to the main application
+        self.app = app
         self.frame = tk.Frame(parent)
         self.frame.pack(fill=tk.BOTH, expand=True)
+        self.selected_unit = None  # Track which unit is being moved
+        self.unit_mode = False  # Track if we're in unit movement mode
         self.setup_sidebar()
         self.setup_canvas()
         if self.app.map_image:
@@ -29,18 +31,122 @@ class GameScreen:
         self.mode_button.pack(pady=5)
         self.undo_button = tk.Button(self.sidebar, text="Undo", command=self.undo)
         self.undo_button.pack(pady=5)
+        
+        # Add unit mode toggle if in Tregonia mode
+        if self.app.roll_mode == 'tregonia':
+            self.unit_mode_button = tk.Button(
+                self.sidebar,
+                text="Enter Unit Move Mode",
+                command=self.toggle_unit_mode
+            )
+            self.unit_mode_button.pack(pady=5)
+
         self.select_player_label = tk.Label(self.sidebar, text="Select Player:")
         self.select_player_label.pack(pady=5)
         self.update_player_buttons()
 
+    def setup_canvas(self):
+        self.canvas_frame = tk.Frame(self.frame)
+        self.canvas_frame.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        self.canvas = tk.Canvas(self.canvas_frame, bg='grey')
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        h_scrollbar = tk.Scrollbar(self.canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        v_scrollbar = tk.Scrollbar(self.canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
+        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.configure(xscrollcommand=h_scrollbar.set, yscrollcommand=v_scrollbar.set)
+        self.canvas.bind('<Configure>', self.on_canvas_configure)
+
+    def toggle_unit_mode(self):
+        """Toggle between unit movement mode and regular map editing mode"""
+        self.unit_mode = not self.unit_mode
+        if self.unit_mode:
+            self.unit_mode_button.config(text="Exit Unit Move Mode")
+            self.mode_button.config(state=tk.DISABLED)
+            self.canvas.config(cursor="crosshair")
+        else:
+            self.unit_mode_button.config(text="Enter Unit Move Mode")
+            self.mode_button.config(state=tk.NORMAL)
+            self.canvas.config(cursor="")
+            self.selected_unit = None
+
+    def display_map_image(self):
+        if self.app.map_image:
+            # Create a copy of the map to draw units on
+            display_image = self.app.map_image.copy()
+            
+            # Draw units if in Tregonia mode
+            if self.app.roll_mode == 'tregonia':
+                draw = ImageDraw.Draw(display_image)
+                try:
+                    # Try to create a font for unit labels
+                    font = ImageFont.truetype("arial.ttf", 16)
+                except IOError:
+                    # Fallback to default font if arial not available
+                    font = ImageFont.load_default()
+
+                for unit in self.app.units:
+                    if unit.position:
+                        x, y = unit.position
+                        
+                        # Draw the unit ID and type on the map
+                        text_id = str(unit.unit_id)
+                        text_type = unit.unit_type.value
+                        
+                        # Get text sizes
+                        try:
+                            id_bbox = draw.textbbox((0, 0), text_id, font=font)
+                            type_bbox = draw.textbbox((0, 0), text_type, font=font)
+                            id_width = id_bbox[2] - id_bbox[0]
+                            id_height = id_bbox[3] - id_bbox[1]
+                            type_width = type_bbox[2] - type_bbox[0]
+                            type_height = type_bbox[3] - type_bbox[1]
+                        except AttributeError:
+                            # Fallback measurements if textbbox not available
+                            id_width = len(text_id) * 10
+                            id_height = 16
+                            type_width = len(text_type) * 10
+                            type_height = 16
+                        
+                        # Draw background rectangles for better readability
+                        padding = 2
+                        # For ID
+                        draw.rectangle(
+                            [x - padding, y - padding,
+                             x + id_width + padding, y + id_height + padding],
+                            fill='white'
+                        )
+                        # For type
+                        draw.rectangle(
+                            [x - padding, y + id_height,
+                             x + type_width + padding, y + id_height + type_height + padding],
+                            fill='white'
+                        )
+                        
+                        # Draw the text
+                        draw.text((x, y), text_id, font=font, fill='black')
+                        draw.text((x, y + id_height), text_type, font=font, fill='black')
+
+            self.app.map_photo = ImageTk.PhotoImage(display_image)
+            self.canvas.delete("all")
+            self.canvas.create_image(0, 0, image=self.app.map_photo, anchor=tk.NW)
+            self.canvas.config(scrollregion=self.canvas.bbox(tk.ALL))
+
     def update_player_buttons(self):
         # Remove existing player buttons and the "Select Player:" label if any
         for widget in self.sidebar.pack_slaves():
-            if widget not in [self.next_turn_button, self.mode_button, self.undo_button, self.turn_label, self.select_player_label]:
-                widget.destroy()
+            if widget not in [self.next_turn_button, self.mode_button, self.undo_button, 
+                            self.turn_label, self.select_player_label]:
+                if self.app.roll_mode == 'tregonia':
+                    if widget != self.unit_mode_button:
+                        widget.destroy()
+                else:
+                    widget.destroy()
+
         # Re-add the "Select Player:" label
         self.select_player_label = tk.Label(self.sidebar, text="Select Player:")
         self.select_player_label.pack(pady=5)
+        
         self.player_buttons = []
         for player in self.app.players:
             # Get remaining tiles for the player
@@ -69,42 +175,47 @@ class GameScreen:
                 else:
                     btn.config(relief=tk.RAISED)
 
-    def setup_canvas(self):
-        self.canvas_frame = tk.Frame(self.frame)
-        self.canvas_frame.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
-        self.canvas = tk.Canvas(self.canvas_frame, bg='grey')
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        h_scrollbar = tk.Scrollbar(self.canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-        v_scrollbar = tk.Scrollbar(self.canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
-        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.canvas.configure(xscrollcommand=h_scrollbar.set, yscrollcommand=v_scrollbar.set)
-        self.canvas.bind('<Configure>', self.on_canvas_configure)
-
-    def display_map_image(self):
-        self.app.map_photo = ImageTk.PhotoImage(self.app.map_image)
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, image=self.app.map_photo, anchor=tk.NW)
-        self.canvas.config(scrollregion=self.canvas.bbox(tk.ALL))
-        self.canvas.config(width=800, height=600)
-
     def bind_events(self):
         self.canvas.bind("<Button-1>", self.on_canvas_click)
 
     def on_canvas_click(self, event):
-        if self.app.map_image is None:
-            messagebox.showwarning("No Map Loaded", "Please import a map before coloring.")
+        if not self.app.map_image:
+            messagebox.showwarning("No Map Loaded", "Please import a map before proceeding.")
             return
+
         x, y = int(self.canvas.canvasx(event.x)), int(self.canvas.canvasy(event.y))
+        
+        # Handle unit movement if in unit mode
+        if self.app.roll_mode == 'tregonia' and self.unit_mode:
+            if self.selected_unit is None:
+                # Try to select a unit near the click
+                for unit in self.app.units:
+                    if unit.position:
+                        unit_x, unit_y = unit.position
+                        # Define a click radius for unit selection
+                        if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
+                            self.selected_unit = unit
+                            break
+            else:
+                # Move the selected unit to the new position
+                self.selected_unit.position = (x, y)
+                self.selected_unit = None
+                self.display_map_image()
+            return
+
+        # Handle map coloring
         if x >= self.app.map_image.width or y >= self.app.map_image.height:
             return
+            
         self.app.map_history.append(self.app.map_image.copy())
         if len(self.app.map_history) > self.app.max_history:
             self.app.map_history.pop(0)
+            
         if self.app.mode == 'color':
             if self.app.selected_player is None:
                 messagebox.showwarning("No Player Selected", "Please select a player before coloring.")
                 return
+                
             target_color = self.app.map_image.getpixel((x, y))
             replacement_color = (
                 int(self.app.selected_player.color[0]),
@@ -112,17 +223,20 @@ class GameScreen:
                 int(self.app.selected_player.color[2]),
                 255
             )
+            
             if self.app.roll_mode != 'external':
                 roll_info = self.app.player_rolls.get(self.app.selected_player.name, ("", 0, 0))
                 if roll_info[2] <= 0:
                     messagebox.showwarning("No Tiles Left",
-                                           f"{self.app.selected_player.name} has no tiles left to place.")
+                                         f"{self.app.selected_player.name} has no tiles left to place.")
                     return
                 self.update_player_tiles(self.app.selected_player.name, -1)
+                
             previous_owner = self.app.tile_owners.get((x, y))
             if previous_owner and previous_owner != self.app.selected_player.name:
                 self.update_player_tiles(previous_owner, 1)
             self.app.tile_owners[(x, y)] = self.app.selected_player.name
+            
         elif self.app.mode == 'erase':
             target_color = self.app.map_image.getpixel((x, y))
             replacement_color = self.app.original_map_image.getpixel((x, y))
@@ -132,12 +246,9 @@ class GameScreen:
                     self.update_player_tiles(player_name, 1)
         else:
             return
+
         flood_fill(self.app.map_image, x, y, target_color, replacement_color)
         self.display_map_image()
-        # Update player list if the current screen has update_player_list method
-        if hasattr(self.app.current_screen, 'update_player_list'):
-            self.app.current_screen.update_player_list()
-        # Update player buttons
         self.update_player_buttons()
 
     def update_player_tiles(self, player_name, change):
@@ -164,24 +275,20 @@ class GameScreen:
         self.app.map_image = self.app.map_history.pop()
         self.app.map_draw = ImageDraw.Draw(self.app.map_image)
         self.display_map_image()
-        # Refresh player buttons to update remaining tiles display
         self.update_player_buttons()
 
     def next_turn(self):
-        """Advance to the next turn and update necessary components."""
         if self.app.map_image is None:
             messagebox.showwarning("No Map Loaded", "Please import a map before proceeding to the next turn.")
             return
+            
         self.app.current_turn += 1
         self.app.save_current_map_state()
         self.app.map_history.clear()
         if self.app.roll_mode != 'external':
             self.app.player_rolls.clear()
+            
         self.turn_label.config(text=f"Turn: {self.app.current_turn}")
-        # Update player list if the current screen has update_player_list method
-        if hasattr(self.app.current_screen, 'update_player_list'):
-            self.app.current_screen.update_player_list()
-        # Refresh player buttons
         self.update_player_buttons()
 
     def destroy(self):

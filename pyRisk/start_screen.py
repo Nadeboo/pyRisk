@@ -15,8 +15,16 @@ class StartScreen:
         tk.Label(self.frame, text="Roll Mode", font=("Arial", 24)).pack(pady=50)
         btn_frame = tk.Frame(self.frame)
         btn_frame.pack(pady=20)
-        tk.Button(btn_frame, text="External", width=20, height=2, command=self.set_external_mode).pack(pady=10)
-        tk.Button(btn_frame, text="Application", width=20, height=2, command=self.set_application_mode).pack(pady=10)
+        
+        # Create buttons for each mode
+        modes = [
+            ("External", self.set_external_mode),
+            ("Application", self.set_application_mode),
+            ("Tregonia", self.set_tregonia_mode)
+        ]
+        
+        for text, command in modes:
+            tk.Button(btn_frame, text=text, width=20, height=2, command=command).pack(pady=10)
 
     def set_external_mode(self):
         self.app.roll_mode = 'external'
@@ -24,6 +32,10 @@ class StartScreen:
 
     def set_application_mode(self):
         self.app.roll_mode = 'application'
+        self.app.show_game_screen()
+        
+    def set_tregonia_mode(self):
+        self.app.roll_mode = 'tregonia'
         self.app.show_game_screen()
 
     def destroy(self):

@@ -17,13 +17,31 @@ class RollScreen:
         self.setup_widgets()
 
     def setup_widgets(self):
-        tk.Button(self.frame, text="Configure Roll Table", command=self.configure_roll_table).pack(pady=5)
+        if self.app.roll_mode != 'tregonia':
+            tk.Button(self.frame, text="Configure Roll Table", command=self.configure_roll_table).pack(pady=5)
+        
+        # Add explanation of Tregonia rules if in Tregonia mode
+        if self.app.roll_mode == 'tregonia':
+            rules_text = """Tregonia Roll Rules:
+            1-2: 3 tiles
+            3-4: 4 tiles
+            5-6: 5 tiles
+            7-8: 6 tiles
+            9-0: 7 tiles
+            Doubles/Palindromes: 9 tiles
+            Triples/4D Palindromes: 11 tiles
+            Longer rolls: 13 tiles"""
+            rules_label = tk.Label(self.frame, text=rules_text, justify=tk.LEFT)
+            rules_label.pack(pady=10)
+
         tk.Button(self.frame, text="Roll for All Players", command=self.roll_for_all_players).pack(pady=5)
+        
         # Current turn's roll results
         tk.Label(self.frame, text=f"Roll Results for Turn {self.app.current_turn}:").pack(pady=5)
         self.roll_results_text = tk.Text(self.frame, height=10)
         self.roll_results_text.pack(fill=tk.BOTH, expand=True)
         self.display_roll_results()
+        
         # All previous rolls
         tk.Label(self.frame, text="All Roll Results:").pack(pady=5)
         self.all_roll_results_text = tk.Text(self.frame, height=10)
@@ -38,7 +56,7 @@ class RollScreen:
         self.app.roll_results.clear()
         for player in self.app.players:
             roll_value = self.app.roll_table.roll_number()
-            tiles = self.app.roll_table.calculate_tiles(roll_value)
+            tiles = self.app.roll_table.calculate_tiles(roll_value, mode=self.app.roll_mode)
             self.app.player_rolls[player.name] = (roll_value, tiles, tiles)
             self.app.roll_results.append((player.name, roll_value, tiles))
         self.app.all_roll_results.append((self.app.current_turn, self.app.roll_results.copy()))

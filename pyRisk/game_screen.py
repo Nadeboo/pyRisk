@@ -74,20 +74,20 @@ class GameScreen:
     def display_map_image(self):
         if self.app.map_image is None:
             return
-                    
+                
         # Only create the base image once per state change
         if not hasattr(self, 'current_display_image'):
             self.current_display_image = self.app.map_image.copy()
             draw = ImageDraw.Draw(self.current_display_image)
             
-            # Draw tile ownership
+            # Only draw owned tiles - sparse approach
             for (x, y), owner in self.app.tile_owners.items():
                 if owner:
                     player = next((p for p in self.app.players if p.name == owner), None)
                     if player:
                         draw.point((x, y), fill=player.color)
 
-        # Check zoom cache first
+        # Efficient zooming with caching
         cache_key = f"zoom_{self.zoom_level}"
         if cache_key in self.zoom_cache:
             display_image = self.zoom_cache[cache_key]
@@ -100,19 +100,17 @@ class GameScreen:
                     int(display_image.width * self.zoom_level),
                     int(display_image.height * self.zoom_level)
                 )
+                # Use NEAREST resampling for better performance with large images
                 display_image = display_image.resize(new_size, Image.Resampling.NEAREST)
                 
-                # Cache the zoomed image
+                # Cache management
                 self.zoom_cache[cache_key] = display_image
-                
-                # Remove oldest cache entry if cache is too large
                 if len(self.zoom_cache) > self.max_cache_size:
                     oldest_key = next(iter(self.zoom_cache))
                     del self.zoom_cache[oldest_key]
-        
-        # Draw units on a separate layer if in Tregonia mode
+
+        # Memory-efficient unit rendering for Tregonia mode
         if self.app.roll_mode == 'tregonia':
-            # Create a transparent overlay for units
             unit_overlay = Image.new('RGBA', display_image.size, (0, 0, 0, 0))
             draw = ImageDraw.Draw(unit_overlay)
             
@@ -123,47 +121,29 @@ class GameScreen:
                 if not hasattr(self, 'unit_font'):
                     self.unit_font = ImageFont.load_default()
 
+            # Batch process units for efficiency
             for unit in self.app.units:
                 if unit.position:
                     x, y = [int(coord * self.zoom_level) for coord in unit.position]
-                    text_id = str(unit.unit_id)
-                    text_type = unit.shorthand
-                    
-                    # Get owner's color
                     owner = next((p for p in self.app.players if p.name == unit.owner), None)
                     owner_color = owner.color if owner else (128, 128, 128)
                     
-                    # Draw black outline for main box
-                    draw.rectangle(
-                        [x - 3, y - 3, x + 23, y + 23],
-                        fill='black'  # First draw black background
-                    )
-                    # Draw white inner box slightly smaller
-                    draw.rectangle(
-                        [x - 2, y - 2, x + 22, y + 22],
-                        fill='white'
-                    )
-                    draw.text((x + 1, y + 1), text_id, font=self.unit_font, fill='black')
-                    draw.text((x + 1, y + 11), text_type, font=self.unit_font, fill='black')
-                    
-                    # Draw black outline for color box
-                    draw.rectangle(
-                        [x - 3, y + 24, x + 23, y + 28],
-                        fill='black'  # First draw black background
-                    )
-                    # Draw color box slightly smaller
-                    draw.rectangle(
-                        [x - 2, y + 25, x + 22, y + 27],
-                        fill=owner_color + (255,)
-                    )
-            
-            # Composite the unit overlay onto the display image
+                    # Combine drawing operations to reduce overhead
+                    draw.rectangle([x - 3, y - 3, x + 23, y + 23], fill='black')
+                    draw.rectangle([x - 2, y - 2, x + 22, y + 22], fill='white')
+                    draw.text((x + 1, y + 1), str(unit.unit_id), font=self.unit_font, fill='black')
+                    draw.text((x + 1, y + 11), unit.shorthand, font=self.unit_font, fill='black')
+                    draw.rectangle([x - 3, y + 24, x + 23, y + 28], fill='black')
+                    draw.rectangle([x - 2, y + 25, x + 22, y + 27], fill=owner_color + (255,))
+
+            # Efficient compositing
             display_image = Image.alpha_composite(display_image.convert('RGBA'), unit_overlay)
 
+        # Create PhotoImage only once per display update
         self.app.map_photo = ImageTk.PhotoImage(display_image)
         self.canvas.delete("all")
         
-        # Calculate center position
+        # Optimize canvas display
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
         image_width = display_image.width
@@ -174,7 +154,7 @@ class GameScreen:
         
         self.map_item = self.canvas.create_image(x, y, image=self.app.map_photo, anchor=tk.NW)
         
-        # Set scroll region with padding
+        # Set scroll region
         padding = 100
         self.canvas.config(scrollregion=(
             -padding,

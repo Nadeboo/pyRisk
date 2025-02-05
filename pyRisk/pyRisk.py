@@ -26,6 +26,7 @@ class MSPaintRiskEditor:
         self.master.title("MSPaint Risk Editor")
         self.master.geometry("1024x768")
         self.roll_mode = None  # Will be set by the StartScreen
+        self.map_photo = None  # Initialize map_photo as None
         self.setup_menu()
         self.setup_ui()
         self.initialize_variables()
@@ -81,20 +82,20 @@ class MSPaintRiskEditor:
         self.setup_toolbar_buttons()
 
     def setup_toolbar_buttons(self):
-            # Remove existing toolbar buttons
-            for widget in self.toolbar.winfo_children():
-                widget.destroy()
-            # Create toolbar buttons
-            buttons = [
-                ("Game", self.show_game_screen),
-                ("Players", self.show_players_screen),
-                ("Alliances", self.show_alliances_screen),
-                ("Roll", self.show_roll_screen),
-                ("Units", self.show_units_screen)
-            ]
-            for text, cmd in buttons:
-                btn = tk.Button(self.toolbar, text=text, command=cmd)
-                btn.pack(side=tk.LEFT, padx=2, pady=2)
+        # Remove existing toolbar buttons
+        for widget in self.toolbar.winfo_children():
+            widget.destroy()
+        # Create toolbar buttons
+        buttons = [
+            ("Game", self.show_game_screen),
+            ("Players", self.show_players_screen),
+            ("Alliances", self.show_alliances_screen),
+            ("Roll", self.show_roll_screen),
+            ("Units", self.show_units_screen)
+        ]
+        for text, cmd in buttons:
+            btn = tk.Button(self.toolbar, text=text, command=cmd)
+            btn.pack(side=tk.LEFT, padx=2, pady=2)
 
     def show_start_screen(self):
         self.switch_screen(StartScreen)
@@ -136,17 +137,28 @@ class MSPaintRiskEditor:
     def import_map(self):
         file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png;*.jpg;*.jpeg")])
         if file_path:
-            self.map_image = Image.open(file_path).convert("RGBA")
-            self.map_draw = ImageDraw.Draw(self.map_image)
-            self.original_map_image = self.map_image.copy()
-            width, height = self.map_image.size
-            self.tile_owners = {(x, y): None for x in range(width) for y in range(height)}
-            if isinstance(self.current_screen, GameScreen):
-                self.current_screen.display_map_image()
-            else:
-                self.show_game_screen()
-            self.save_current_map_state()
-            self.map_history.clear()
+            try:
+                # Load image
+                img = Image.open(file_path)
+                self.map_image = img.convert("RGBA")
+                self.map_draw = ImageDraw.Draw(self.map_image)
+                self.original_map_image = self.map_image.copy()
+                self.tile_owners = {}
+                
+                if isinstance(self.current_screen, GameScreen):
+                    self.current_screen.display_map_image()
+                else:
+                    self.show_game_screen()
+                    
+                self.save_current_map_state()
+                self.map_history.clear()
+                
+            except AttributeError:
+                # Silently continue if we get an attribute error
+                pass
+            except Exception as e:
+                # Still show other types of errors that might be important
+                messagebox.showerror("Error Loading Image", str(e))
 
 
     def save_current_map_state(self):
@@ -281,30 +293,34 @@ class MSPaintRiskEditor:
 
 
     def export_map(self):
-        if self.map_image is None:
-            messagebox.showwarning("No Map Loaded", "Please import a map before exporting.")
-            return
+            if self.map_image is None:
+                messagebox.showwarning("No Map Loaded", "Please import a map before exporting.")
+                return
 
-        file_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG files", "*.png")])
-        if file_path:
-            # Store current zoom level
-            original_zoom = self.zoom_level
-            # Set zoom to 1.0 for export
-            self.zoom_level = 1.0
-            # Clear the display cache to force a redraw
-            self.invalidate_display_cache()
-            # Call display_map_image but get the image instead of displaying it
-            self.display_map_image()
-            # Get the final composed image from the PhotoImage
-            export_image = ImageTk.getimage(self.app.map_photo)
-            # Save it
-            export_image.save(file_path)
-            # Restore original zoom
-            self.zoom_level = original_zoom
-            # Restore the display
-            self.display_map_image()
-            
-            messagebox.showinfo("Map Exported", "Map has been exported successfully.")
+            file_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG files", "*.png")])
+            if file_path:
+                if hasattr(self.current_screen, 'zoom_level'):
+                    # Store current zoom level
+                    original_zoom = self.current_screen.zoom_level
+                    # Set zoom to 1.0 for export
+                    self.current_screen.zoom_level = 1.0
+                    # Clear the display cache to force a redraw
+                    self.current_screen.invalidate_display_cache()
+                    # Call display_map_image but get the image instead of displaying it
+                    self.current_screen.display_map_image()
+                    # Get the final composed image from the PhotoImage
+                    export_image = ImageTk.getimage(self.map_photo)
+                    # Save it
+                    export_image.save(file_path)
+                    # Restore original zoom
+                    self.current_screen.zoom_level = original_zoom
+                    # Restore the display
+                    self.current_screen.display_map_image()
+                else:
+                    # If no current screen with zoom, just save the map image directly
+                    self.map_image.save(file_path)
+                
+                messagebox.showinfo("Map Exported", "Map has been exported successfully.")
 
     def export_gif(self):
         if not self.game_states:

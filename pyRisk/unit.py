@@ -31,6 +31,12 @@ class UnitType(Enum):
         if self == UnitType.INFANTRY:
             return 1
         return 0
+        
+    @property
+    def shorthand(self) -> str:
+        if self == UnitType.INFANTRY:
+            return "INF"
+        return ""
 
 
 @dataclass
@@ -55,3 +61,7 @@ class Unit:
     @property
     def wall_bonus(self) -> int:
         return self.unit_type.wall_bonus
+        
+    @property
+    def shorthand(self) -> str:
+        return self.unit_type.shorthand

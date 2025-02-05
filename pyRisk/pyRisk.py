@@ -152,10 +152,48 @@ class MSPaintRiskEditor:
     def save_current_map_state(self):
         if self.map_image is None:
             return  # No map to save
+            
         filename = f"{self.temp_dir}/map_turn_{self.current_turn}.png"
-        self.map_image.save(filename)
+        
+        # Create temporary image with units rendered
+        if self.current_screen and hasattr(self.current_screen, 'display_map_image'):
+            # Store current zoom
+            current_zoom = self.current_screen.zoom_level
+            # Set zoom to 1.0 for saving
+            self.current_screen.zoom_level = 1.0
+            self.current_screen.invalidate_display_cache()
+            # Generate the image
+            self.current_screen.display_map_image()
+            # Get and save the complete image with units
+            export_image = ImageTk.getimage(self.app.map_photo)
+            export_image.save(filename)
+            # Restore zoom
+            self.current_screen.zoom_level = current_zoom
+            self.current_screen.display_map_image()
+        else:
+            # Fallback if no display screen
+            self.map_image.save(filename)
+            
+        # Create game state and save unit positions
         game_state = GameState(self.current_turn, filename)
+        if self.roll_mode == 'tregonia':
+            game_state.save_unit_state(self.units)
         self.game_states.append(game_state)
+
+    def load_game_state(self, state):
+        """Load a specific game state"""
+        if os.path.exists(state.map_image_path):
+            self.map_image = Image.open(state.map_image_path)
+            self.map_draw = ImageDraw.Draw(self.map_image)
+            
+            # Restore unit positions for this turn
+            if self.roll_mode == 'tregonia':
+                state.restore_unit_state(self)
+                
+            # Update display
+            if self.current_screen and hasattr(self.current_screen, 'display_map_image'):
+                self.current_screen.invalidate_display_cache()
+                self.current_screen.display_map_image()
 
     def save_game(self):
         if not self.game_states:
@@ -246,9 +284,26 @@ class MSPaintRiskEditor:
         if self.map_image is None:
             messagebox.showwarning("No Map Loaded", "Please import a map before exporting.")
             return
+
         file_path = filedialog.asksaveasfilename(defaultextension=".png", filetypes=[("PNG files", "*.png")])
         if file_path:
-            self.map_image.save(file_path)
+            # Store current zoom level
+            original_zoom = self.zoom_level
+            # Set zoom to 1.0 for export
+            self.zoom_level = 1.0
+            # Clear the display cache to force a redraw
+            self.invalidate_display_cache()
+            # Call display_map_image but get the image instead of displaying it
+            self.display_map_image()
+            # Get the final composed image from the PhotoImage
+            export_image = ImageTk.getimage(self.app.map_photo)
+            # Save it
+            export_image.save(file_path)
+            # Restore original zoom
+            self.zoom_level = original_zoom
+            # Restore the display
+            self.display_map_image()
+            
             messagebox.showinfo("Map Exported", "Map has been exported successfully.")
 
     def export_gif(self):

@@ -74,7 +74,7 @@ class GameScreen:
     def display_map_image(self):
         if self.app.map_image is None:
             return
-                
+                    
         # Only create the base image once per state change
         if not hasattr(self, 'current_display_image'):
             self.current_display_image = self.app.map_image.copy()
@@ -127,14 +127,35 @@ class GameScreen:
                 if unit.position:
                     x, y = [int(coord * self.zoom_level) for coord in unit.position]
                     text_id = str(unit.unit_id)
-                    text_type = unit.unit_type.value
+                    text_type = unit.shorthand
                     
+                    # Get owner's color
+                    owner = next((p for p in self.app.players if p.name == unit.owner), None)
+                    owner_color = owner.color if owner else (128, 128, 128)
+                    
+                    # Draw black outline for main box
                     draw.rectangle(
-                        [x - 2, y - 2, x + 20, y + 35],
+                        [x - 3, y - 3, x + 23, y + 23],
+                        fill='black'  # First draw black background
+                    )
+                    # Draw white inner box slightly smaller
+                    draw.rectangle(
+                        [x - 2, y - 2, x + 22, y + 22],
                         fill='white'
                     )
-                    draw.text((x, y), text_id, font=self.unit_font, fill='black')
-                    draw.text((x, y + 20), text_type, font=self.unit_font, fill='black')
+                    draw.text((x + 1, y + 1), text_id, font=self.unit_font, fill='black')
+                    draw.text((x + 1, y + 11), text_type, font=self.unit_font, fill='black')
+                    
+                    # Draw black outline for color box
+                    draw.rectangle(
+                        [x - 3, y + 24, x + 23, y + 28],
+                        fill='black'  # First draw black background
+                    )
+                    # Draw color box slightly smaller
+                    draw.rectangle(
+                        [x - 2, y + 25, x + 22, y + 27],
+                        fill=owner_color + (255,)
+                    )
             
             # Composite the unit overlay onto the display image
             display_image = Image.alpha_composite(display_image.convert('RGBA'), unit_overlay)
@@ -274,13 +295,23 @@ class GameScreen:
         # Handle unit movement if in unit mode
         if self.app.roll_mode == 'tregonia' and self.unit_mode:
             if self.selected_unit is None:
-                # Try to select a unit near the click
+                # First try to select a unit near the click
                 for unit in self.app.units:
-                    if unit.position:
+                    if unit.position:  # Only check units that are already placed
                         unit_x, unit_y = unit.position
                         # Define a click radius for unit selection
                         if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
                             self.selected_unit = unit
+                            break
+                else:  # No existing unit was clicked
+                    # Look for the first unplaced unit
+                    for unit in self.app.units:
+                        if unit.position is None:
+                            self.selected_unit = unit
+                            # Place it immediately at the clicked location
+                            self.selected_unit.position = (x, y)
+                            self.selected_unit = None
+                            self.display_map_image()
                             break
             else:
                 # Move the selected unit to the new position
@@ -292,16 +323,16 @@ class GameScreen:
         # Handle map coloring
         if x >= self.app.map_image.width or y >= self.app.map_image.height:
             return
-            
+                
         self.app.map_history.append(self.app.map_image.copy())
         if len(self.app.map_history) > self.app.max_history:
             self.app.map_history.pop(0)
-            
+                
         if self.app.mode == 'color':
             if self.app.selected_player is None:
                 messagebox.showwarning("No Player Selected", "Please select a player before coloring.")
                 return
-                
+                    
             target_color = self.app.map_image.getpixel((x, y))
             replacement_color = (
                 int(self.app.selected_player.color[0]),
@@ -309,7 +340,7 @@ class GameScreen:
                 int(self.app.selected_player.color[2]),
                 255
             )
-            
+                
             if self.app.roll_mode != 'external':
                 roll_info = self.app.player_rolls.get(self.app.selected_player.name, ("", 0, 0))
                 if roll_info[2] <= 0:
@@ -317,12 +348,12 @@ class GameScreen:
                                         f"{self.app.selected_player.name} has no tiles left to place.")
                     return
                 self.update_player_tiles(self.app.selected_player.name, -1)
-                
+                    
             previous_owner = self.app.tile_owners.get((x, y))
             if previous_owner and previous_owner != self.app.selected_player.name:
                 self.update_player_tiles(previous_owner, 1)
             self.app.tile_owners[(x, y)] = self.app.selected_player.name
-            
+                
         elif self.app.mode == 'erase':
             target_color = self.app.map_image.getpixel((x, y))
             replacement_color = self.app.original_map_image.getpixel((x, y))

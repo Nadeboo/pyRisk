@@ -81,14 +81,20 @@ class MSPaintRiskEditor:
         self.setup_toolbar_buttons()
 
     def setup_toolbar_buttons(self):
-        # Remove existing toolbar buttons
-        for widget in self.toolbar.winfo_children():
-            widget.destroy()
-        # Create toolbar buttons
-                          ("Players", self.show_players_screen),
-                          ("Alliances", self.show_alliances_screen),
-            btn = tk.Button(self.toolbar, text=text, command=cmd)
-            btn.pack(side=tk.LEFT, padx=2, pady=2)
+            # Remove existing toolbar buttons
+            for widget in self.toolbar.winfo_children():
+                widget.destroy()
+            # Create toolbar buttons
+            buttons = [
+                ("Game", self.show_game_screen),
+                ("Players", self.show_players_screen),
+                ("Alliances", self.show_alliances_screen),
+                ("Roll", self.show_roll_screen),
+                ("Units", self.show_units_screen)
+            ]
+            for text, cmd in buttons:
+                btn = tk.Button(self.toolbar, text=text, command=cmd)
+                btn.pack(side=tk.LEFT, padx=2, pady=2)
 
     def show_start_screen(self):
         self.switch_screen(StartScreen)

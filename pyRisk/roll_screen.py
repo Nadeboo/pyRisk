@@ -9,7 +9,6 @@ from game_screen import GameScreen  # Ensure this import exists
 class RollScreen:
     MAX_ROLL_LENGTH = 20  # Max digits allowed
 
-class RollScreen:
     def __init__(self, parent, app):
         self.parent = parent
         self.app = app
@@ -23,28 +22,16 @@ class RollScreen:
 
     def setup_widgets(self):
         if self.app.roll_mode != 'tregonia':
-        tk.Button(self.frame, text="Configure Roll Table", command=self.configure_roll_table).pack(pady=5)
-        tk.Button(self.frame, text="Roll for All Players", command=self.roll_for_all_players).pack(pady=5)
-        tk.Label(self.frame, text=f"Roll Results for Turn {self.app.current_turn}:").pack(pady=5)
-        self.roll_results_text = tk.Text(self.frame, height=10, state=tk.DISABLED)
-        self.roll_results_text.pack(fill=tk.BOTH, expand=True)
-        tk.Label(self.frame, text="All Roll Results:").pack(pady=5)
-        self.all_roll_results_text = tk.Text(self.frame, height=10, state=tk.DISABLED)
-        self.all_roll_results_text.pack(fill=tk.BOTH, expand=True)
-        self.display_roll_results()
-        self.display_all_roll_results()
-
-
-
-        tk.Label(self.frame, text=f"Roll Results for Turn {self.app.current_turn}:").pack(pady=5)
-        self.roll_results_text.pack(fill=tk.BOTH, expand=True)
-        self.display_roll_results()
-        
-        # All previous rolls
-        tk.Label(self.frame, text="All Roll Results:").pack(pady=5)
-        self.all_roll_results_text.pack(fill=tk.BOTH, expand=True)
-        self.display_roll_results()
-        self.display_all_roll_results()
+            tk.Button(self.frame, text="Configure Roll Table", command=self.configure_roll_table).pack(pady=5)
+            tk.Button(self.frame, text="Roll for All Players", command=self.roll_for_all_players).pack(pady=5)
+            tk.Label(self.frame, text=f"Roll Results for Turn {self.app.current_turn}:").pack(pady=5)
+            self.roll_results_text = tk.Text(self.frame, height=10, state=tk.DISABLED)
+            self.roll_results_text.pack(fill=tk.BOTH, expand=True)
+            tk.Label(self.frame, text="All Roll Results:").pack(pady=5)
+            self.all_roll_results_text = tk.Text(self.frame, height=10, state=tk.DISABLED)
+            self.all_roll_results_text.pack(fill=tk.BOTH, expand=True)
+            self.display_roll_results()
+            self.display_all_roll_results()
 
     def limit_roll_length(self, var):
         text = var.get()
@@ -59,6 +46,7 @@ class RollScreen:
         self.app.roll_results.clear()
         for player in self.app.players:
             roll_value = self.app.roll_table.roll_number()
+            tiles = self.app.roll_table.calculate_tiles(roll_value)
             self.app.player_rolls[player.name] = (roll_value, tiles, tiles)
             self.app.roll_results.append((player.name, roll_value, tiles))
         self.app.all_roll_results.append((self.app.current_turn, self.app.roll_results.copy()))

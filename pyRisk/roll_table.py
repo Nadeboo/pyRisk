@@ -37,7 +37,6 @@ class RollTable:
                 base_tiles = self.number_values.get(repeat_value, 1) * repeat_length
                 tiles += self._apply_config(base_tiles, repeat_config)
             return tiles  # Return early if a repeat was found
->>>>>>> 093dc3ca3f58bf1f2f81fbb2eda8e86bdf91dba3:pyRisk/models/roll_table.py
 
         # Check for palindromes at the end
         palindrome_length = self._get_end_palindrome_length(roll_str)
@@ -47,7 +46,6 @@ class RollTable:
                 base_tiles = self.number_values.get(roll_str[-1], 1) * palindrome_length
                 tiles += self._apply_config(base_tiles, palindrome_config)
             return tiles  # Return early if a palindrome was found
->>>>>>> 093dc3ca3f58bf1f2f81fbb2eda8e86bdf91dba3:pyRisk/models/roll_table.py
 
         # If no repeats or palindromes, just count the last digit
         last_digit = roll_str[-1]
@@ -106,7 +104,6 @@ class RollTable:
                 break  # Stop as soon as we find a non-repeating digit
 
         # If the repeat length is 1, no repeat was found
->>>>>>> 093dc3ca3f58bf1f2f81fbb2eda8e86bdf91dba3:pyRisk/models/roll_table.py
         if repeat_length == 1:
             return 0, ''
         else:

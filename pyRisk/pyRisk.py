@@ -91,7 +91,7 @@ class MSPaintRiskEditor:
             ("Players", self.show_players_screen),
             ("Alliances", self.show_alliances_screen),
             ("Roll", self.show_roll_screen),
-            ("Units", self.show_units_screen)
+            ("Armies", self.show_units_screen)
         ]
         for text, cmd in buttons:
             btn = tk.Button(self.toolbar, text=text, command=cmd)

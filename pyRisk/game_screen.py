@@ -10,11 +10,9 @@ class GameScreen:
         self.app = app
         self.frame = tk.Frame(parent)
         self.frame.pack(fill=tk.BOTH, expand=True)
-        self.selected_unit = None  # Track which unit is being moved
-        self.unit_mode = False  # Track if we're in unit movement mode
-        self.zoom_level = 1.0  # Initialize zoom level
-        self.zoom_cache = {}  # Cache for zoomed images
-        self.max_cache_size = 5  # Limit cache size to prevent memory issues
+        self.selected_unit = None
+        self.unit_mode = False
+        self.zoom_level = 1.0
         self.setup_sidebar()
         self.setup_canvas()
         if self.app.map_image:
@@ -71,79 +69,152 @@ class GameScreen:
             self.canvas.config(cursor="")
             self.selected_unit = None
 
+    def on_canvas_right_click(self, event):
+        """Handle right-click on canvas"""
+        if not self.app.roll_mode == 'tregonia':
+            return
+            
+        # Convert canvas coordinates to map coordinates
+        x = int(self.canvas.canvasx(event.x) / self.zoom_level)
+        y = int(self.canvas.canvasy(event.y) / self.zoom_level)
+        
+        # Check if we clicked on any unit
+        clicked_unit = None
+        for unit in self.app.units:
+            if unit.position:
+                unit_x, unit_y = unit.position
+                # Define a click radius
+                if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
+                    clicked_unit = unit
+                    break
+        
+        if clicked_unit:
+            # Create popup menu
+            popup = tk.Menu(self.canvas, tearoff=0)
+            
+            # Add "Remove from Map" option at the top
+            popup.add_command(
+                label="Remove from Map",
+                command=lambda: self.remove_unit_from_map(clicked_unit)
+            )
+            popup.add_separator()
+            
+            if clicked_unit.is_army:
+                # Create submenu for removing individual units
+                units_menu = tk.Menu(popup, tearoff=0)
+                if clicked_unit.sub_units:
+                    for unit in clicked_unit.sub_units:
+                        units_menu.add_command(
+                            label=f"Remove {unit.unit_type.value} #{unit.unit_id}",
+                            command=lambda u=unit: self.remove_unit_from_army(clicked_unit, u)
+                        )
+                else:
+                    units_menu.add_command(label="No units in army", state=tk.DISABLED)
+                
+                popup.add_cascade(label="Remove Unit", menu=units_menu)
+                popup.add_separator()
+                popup.add_command(
+                    label="Delete Entire Army",
+                    command=lambda: self.delete_unit(clicked_unit)
+                )
+            else:
+                # Single unit deletion
+                popup.add_command(
+                    label="Delete Unit",
+                    command=lambda: self.delete_unit(clicked_unit)
+                )
+            
+            # Display the popup menu at mouse position
+            popup.tk_popup(event.x_root, event.y_root)
+
+    def remove_unit_from_army(self, army, unit):
+        """Remove a single unit from an army"""
+        if unit in army.sub_units:
+            army.sub_units.remove(unit)
+            self.app.units.remove(unit)
+            
+            # Refresh displays
+            self.display_map_image()
+            if hasattr(self.app.current_screen, 'update_army_list'):
+                self.app.current_screen.update_army_list()
+
+    def remove_unit_from_map(self, unit):
+        """Remove a unit from the map without deleting it from the game"""
+        unit.position = None
+        if unit.is_army:
+            # If it's an army, remove all sub-units from map too
+            for sub_unit in unit.sub_units:
+                sub_unit.position = None
+        self.display_map_image()
+
+    def delete_unit(self, unit):
+        """Delete a unit from both the map and the units list"""
+        # First remove any sub-units if this is an army
+        if unit.sub_units:
+            for sub_unit in unit.sub_units[:]:  # Create a copy of the list to avoid modification while iterating
+                self.app.units.remove(sub_unit)
+        
+        # Remove the unit itself
+        self.app.units.remove(unit)
+        
+        # Refresh displays
+        self.display_map_image()
+        if hasattr(self.app.current_screen, 'update_army_list'):
+            self.app.current_screen.update_army_list()
+
     def display_map_image(self):
         if self.app.map_image is None:
             return
-                
-        # Only create the base image once per state change
-        if not hasattr(self, 'current_display_image'):
-            self.current_display_image = self.app.map_image.copy()
-            draw = ImageDraw.Draw(self.current_display_image)
-            
-            # Only draw owned tiles - sparse approach
-            for (x, y), owner in self.app.tile_owners.items():
-                if owner:
-                    player = next((p for p in self.app.players if p.name == owner), None)
-                    if player:
-                        draw.point((x, y), fill=player.color)
 
-        # Efficient zooming with caching
-        cache_key = f"zoom_{self.zoom_level}"
-        if cache_key in self.zoom_cache:
-            display_image = self.zoom_cache[cache_key]
-        else:
-            display_image = self.current_display_image.copy()
-            
-            # Apply zoom if needed
-            if self.zoom_level != 1.0:
-                new_size = (
-                    int(display_image.width * self.zoom_level),
-                    int(display_image.height * self.zoom_level)
-                )
-                # Use NEAREST resampling for better performance with large images
-                display_image = display_image.resize(new_size, Image.Resampling.NEAREST)
-                
-                # Cache management
-                self.zoom_cache[cache_key] = display_image
-                if len(self.zoom_cache) > self.max_cache_size:
-                    oldest_key = next(iter(self.zoom_cache))
-                    del self.zoom_cache[oldest_key]
+        # Create display image at original size
+        display_image = self.app.map_image.copy()
+        draw = ImageDraw.Draw(display_image)
+        
+        # Draw owned tiles
+        for (x, y), owner in self.app.tile_owners.items():
+            if owner:
+                player = next((p for p in self.app.players if p.name == owner), None)
+                if player:
+                    draw.point((x, y), fill=player.color)
 
-        # Memory-efficient unit rendering for Tregonia mode
+        # Apply zoom
+        if self.zoom_level != 1.0:
+            new_size = (
+                int(display_image.width * self.zoom_level),
+                int(display_image.height * self.zoom_level)
+            )
+            display_image = display_image.resize(new_size, Image.Resampling.NEAREST)
+
+        # Render units if in Tregonia mode
         if self.app.roll_mode == 'tregonia':
             unit_overlay = Image.new('RGBA', display_image.size, (0, 0, 0, 0))
             draw = ImageDraw.Draw(unit_overlay)
             
+            # Create font scaled to zoom level
             try:
-                if not hasattr(self, 'unit_font'):
-                    self.unit_font = ImageFont.truetype("arial.ttf", int(16 * self.zoom_level))
+                unit_font = ImageFont.truetype("arial.ttf", int(16 * self.zoom_level))
             except IOError:
-                if not hasattr(self, 'unit_font'):
-                    self.unit_font = ImageFont.load_default()
+                unit_font = ImageFont.load_default()
 
-            # Batch process units for efficiency
             for unit in self.app.units:
                 if unit.position:
                     x, y = [int(coord * self.zoom_level) for coord in unit.position]
                     owner = next((p for p in self.app.players if p.name == unit.owner), None)
                     owner_color = owner.color if owner else (128, 128, 128)
                     
-                    # Combine drawing operations to reduce overhead
                     draw.rectangle([x - 3, y - 3, x + 23, y + 23], fill='black')
                     draw.rectangle([x - 2, y - 2, x + 22, y + 22], fill='white')
-                    draw.text((x + 1, y + 1), str(unit.unit_id), font=self.unit_font, fill='black')
-                    draw.text((x + 1, y + 11), unit.shorthand, font=self.unit_font, fill='black')
+                    draw.text((x + 1, y + 1), str(unit.unit_id), font=unit_font, fill='black')
                     draw.rectangle([x - 3, y + 24, x + 23, y + 28], fill='black')
                     draw.rectangle([x - 2, y + 25, x + 22, y + 27], fill=owner_color + (255,))
 
-            # Efficient compositing
             display_image = Image.alpha_composite(display_image.convert('RGBA'), unit_overlay)
 
-        # Create PhotoImage only once per display update
+        # Update PhotoImage
         self.app.map_photo = ImageTk.PhotoImage(display_image)
         self.canvas.delete("all")
         
-        # Optimize canvas display
+        # Center image in canvas
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
         image_width = display_image.width
@@ -154,7 +225,7 @@ class GameScreen:
         
         self.map_item = self.canvas.create_image(x, y, image=self.app.map_photo, anchor=tk.NW)
         
-        # Set scroll region
+        # Set scroll region with padding
         padding = 100
         self.canvas.config(scrollregion=(
             -padding,
@@ -162,16 +233,6 @@ class GameScreen:
             image_width + padding,
             image_height + padding
         ))
-
-    def clear_zoom_cache(self):
-        """Clear the zoom cache when the base image changes"""
-        self.zoom_cache.clear()
-
-    def invalidate_display_cache(self):
-        """Clear all caches when the display needs to be fully refreshed"""
-        if hasattr(self, 'current_display_image'):
-            del self.current_display_image
-        self.clear_zoom_cache()
 
     def update_player_buttons(self):
         for widget in self.sidebar.winfo_children():
@@ -212,6 +273,7 @@ class GameScreen:
 
     def bind_events(self):
         self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<Button-3>", self.on_canvas_right_click)  # Right click
         self.canvas.bind("<MouseWheel>", self.on_mousewheel)  # Windows
         self.canvas.bind("<Button-4>", self.on_mousewheel)    # Linux scroll up
         self.canvas.bind("<Button-5>", self.on_mousewheel)    # Linux scroll down
@@ -229,31 +291,31 @@ class GameScreen:
         if not bbox:
             return
             
-        image_x, image_y = bbox[0], bbox[1]
-        
         # Calculate relative position within the image
+        image_x, image_y = bbox[0], bbox[1]
         rel_x = (mouse_x - image_x) / (bbox[2] - bbox[0])
         rel_y = (mouse_y - image_y) / (bbox[3] - bbox[1])
         
-        # Update zoom level
+        # Update zoom level with finer control
         old_zoom = self.zoom_level
         if event.num == 5 or event.delta < 0:  # Zoom out
             self.zoom_level = max(0.1, self.zoom_level - 0.1)
         elif event.num == 4 or event.delta > 0:  # Zoom in
             self.zoom_level = min(5.0, self.zoom_level + 0.1)
         
-        # Schedule the update with the calculated positions
+        # Schedule the update
         self._zoom_after = self.canvas.after(50, lambda: self._update_zoom(rel_x, rel_y))
 
     def _update_zoom(self, rel_x, rel_y):
+        # Update display
         self.display_map_image()
         
-        # Get new image position and size
+        # Get new image bbox
         bbox = self.canvas.bbox(self.map_item)
         if not bbox:
             return
             
-        # Calculate new scroll position to maintain relative mouse position
+        # Calculate new scroll position
         new_x = bbox[0] + (bbox[2] - bbox[0]) * rel_x
         new_y = bbox[1] + (bbox[3] - bbox[1]) * rel_y
         
@@ -270,49 +332,45 @@ class GameScreen:
         if self.app.map_image is None:
             return
 
-        x, y = int(self.canvas.canvasx(event.x) / self.zoom_level), int(self.canvas.canvasy(event.y) / self.zoom_level)
+        # Convert canvas coordinates to original image coordinates
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
         
+        # Get the actual image position on the canvas
+        bbox = self.canvas.bbox(self.map_item)
+        if not bbox:
+            return
+            
+        # Calculate offset from image origin
+        image_x = canvas_x - bbox[0]
+        image_y = canvas_y - bbox[1]
+        
+        # Convert to original image coordinates
+        x = int(image_x / self.zoom_level)
+        y = int(image_y / self.zoom_level)
+
         # Handle unit movement if in unit mode
         if self.app.roll_mode == 'tregonia' and self.unit_mode:
-            if self.selected_unit is None:
-                # First try to select a unit near the click
-                for unit in self.app.units:
-                    if unit.position:  # Only check units that are already placed
-                        unit_x, unit_y = unit.position
-                        # Define a click radius for unit selection
-                        if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
-                            self.selected_unit = unit
-                            break
-                else:  # No existing unit was clicked
-                    # Look for the first unplaced unit
-                    for unit in self.app.units:
-                        if unit.position is None:
-                            self.selected_unit = unit
-                            # Place it immediately at the clicked location
-                            self.selected_unit.position = (x, y)
-                            self.selected_unit = None
-                            self.display_map_image()
-                            break
-            else:
-                # Move the selected unit to the new position
-                self.selected_unit.position = (x, y)
-                self.selected_unit = None
-                self.display_map_image()
+            self.handle_unit_placement(x, y)
+            return
+
+        # Check if click is within image bounds
+        if x >= self.app.map_image.width or y >= self.app.map_image.height:
             return
 
         # Handle map coloring
-        if x >= self.app.map_image.width or y >= self.app.map_image.height:
-            return
-                
+        self.handle_map_coloring(x, y)
+
+    def handle_map_coloring(self, x, y):
         self.app.map_history.append(self.app.map_image.copy())
         if len(self.app.map_history) > self.app.max_history:
             self.app.map_history.pop(0)
-                
+
         if self.app.mode == 'color':
             if self.app.selected_player is None:
                 messagebox.showwarning("No Player Selected", "Please select a player before coloring.")
                 return
-                    
+
             target_color = self.app.map_image.getpixel((x, y))
             replacement_color = (
                 int(self.app.selected_player.color[0]),
@@ -320,34 +378,58 @@ class GameScreen:
                 int(self.app.selected_player.color[2]),
                 255
             )
-                
-            if self.app.roll_mode != 'external':
+
+            if self.app.roll_mode == 'application':
                 roll_info = self.app.player_rolls.get(self.app.selected_player.name, ("", 0, 0))
                 if roll_info[2] <= 0:
                     messagebox.showwarning("No Tiles Left",
-                                        f"{self.app.selected_player.name} has no tiles left to place.")
+                                         f"{self.app.selected_player.name} has no tiles left to place.")
                     return
                 self.update_player_tiles(self.app.selected_player.name, -1)
-                    
+
             previous_owner = self.app.tile_owners.get((x, y))
             if previous_owner and previous_owner != self.app.selected_player.name:
-                self.update_player_tiles(previous_owner, 1)
+                if self.app.roll_mode == 'application':
+                    self.update_player_tiles(previous_owner, 1)
             self.app.tile_owners[(x, y)] = self.app.selected_player.name
-                
+
         elif self.app.mode == 'erase':
             target_color = self.app.map_image.getpixel((x, y))
             replacement_color = self.app.original_map_image.getpixel((x, y))
             if (x, y) in self.app.tile_owners:
                 player_name = self.app.tile_owners.pop((x, y))
-                if self.app.roll_mode != 'external':
+                if self.app.roll_mode == 'application':
                     self.update_player_tiles(player_name, 1)
 
         flood_fill(self.app.map_image, x, y, target_color, replacement_color)
-        self.invalidate_display_cache()
         self.display_map_image()
         if hasattr(self.app.current_screen, 'update_player_list'):
             self.app.current_screen.update_player_list()
         self.update_player_buttons()
+
+    def handle_unit_placement(self, x, y):
+        if self.selected_unit is None:
+            # Try to select a unit near the click
+            for unit in self.app.units:
+                if unit.position:
+                    unit_x, unit_y = unit.position
+                    if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
+                        self.selected_unit = unit
+                        break
+            else:
+                # No existing unit was clicked, look for first unplaced unit
+                for unit in self.app.units:
+                    if unit.position is None:
+                        self.selected_unit = unit
+                        self.selected_unit.position = (x, y)
+                        self.selected_unit = None
+                        self.display_map_image()
+                        break
+        else:
+            # Move selected unit to new position
+            self.selected_unit.position = (x, y)
+            self.selected_unit = None
+            self.display_map_image()
 
     def update_player_tiles(self, player_name, change):
         if player_name in self.app.player_rolls:
@@ -395,6 +477,7 @@ class GameScreen:
 
     def destroy(self):
         self.canvas.unbind("<Button-1>")
+        self.canvas.unbind("<Button-3>")  # Unbind right click
         self.canvas.unbind("<MouseWheel>")
         self.canvas.unbind("<Button-4>")
         self.canvas.unbind("<Button-5>")

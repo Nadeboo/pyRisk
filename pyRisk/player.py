@@ -12,6 +12,17 @@ class Player:
         self.allies = []
         self.naps = []
 
+        # Resource counters
+        self.gold = 0
+        self.research = 0
+        self.mana = 0
+        self.influence = 0
+        
+        # Per-turn increases
+        self.gold_per_turn = 0
+        self.research_per_turn = 0
+        self.mana_per_turn = 0
+        self.influence_per_turn = 0
 
     def add_ally(self, player):
         if player not in self.allies:
@@ -20,3 +31,10 @@ class Player:
     def add_nap(self, player):
         if player not in self.naps:
             self.naps.append(player)
+
+    def apply_turn_increases(self):
+        """Apply all per-turn resource increases"""
+        self.gold += self.gold_per_turn
+        self.research += self.research_per_turn
+        self.mana += self.mana_per_turn
+        self.influence += self.influence_per_turn

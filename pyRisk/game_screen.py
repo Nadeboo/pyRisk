@@ -459,21 +459,25 @@ class GameScreen:
         self.update_player_buttons()
 
     def on_next_turn(self):
-        """Handle next turn button click"""
-        if self.app.map_image is None:
-            messagebox.showwarning("No Map Loaded", "Please import a map before proceeding to the next turn.")
-            return
-            
-        self.app.current_turn += 1
-        self.app.save_current_map_state()
-        self.app.map_history.clear()
-        if self.app.roll_mode != 'external':
-            self.app.player_rolls.clear()
-            
-        self.turn_label.config(text=f"Turn: {self.app.current_turn}")
-        if hasattr(self.app.current_screen, 'update_player_list'):
-            self.app.current_screen.update_player_list()
-        self.update_player_buttons()
+            """Handle next turn button click"""
+            if self.app.map_image is None:
+                messagebox.showwarning("No Map Loaded", "Please import a map before proceeding to the next turn.")
+                return
+                
+            # Apply resource increases for all players
+            for player in self.app.players:
+                player.apply_turn_increases()
+                
+            self.app.current_turn += 1
+            self.app.save_current_map_state()
+            self.app.map_history.clear()
+            if self.app.roll_mode != 'external':
+                self.app.player_rolls.clear()
+                
+            self.turn_label.config(text=f"Turn: {self.app.current_turn}")
+            if hasattr(self.app.current_screen, 'update_player_list'):
+                self.app.current_screen.update_player_list()
+            self.update_player_buttons()
 
     def destroy(self):
         self.canvas.unbind("<Button-1>")

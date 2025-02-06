@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import messagebox
 from PIL import ImageTk, ImageDraw, Image, ImageFont
 from utils import flood_fill
+from players_screen import PlayersScreen
 class GameScreen:
     def __init__(self, parent, app):
         self.parent = parent
@@ -383,25 +384,50 @@ class GameScreen:
                 roll_info = self.app.player_rolls.get(self.app.selected_player.name, ("", 0, 0))
                 if roll_info[2] <= 0:
                     messagebox.showwarning("No Tiles Left",
-                                         f"{self.app.selected_player.name} has no tiles left to place.")
+                                        f"{self.app.selected_player.name} has no tiles left to place.")
                     return
                 self.update_player_tiles(self.app.selected_player.name, -1)
 
-            previous_owner = self.app.tile_owners.get((x, y))
-            if previous_owner and previous_owner != self.app.selected_player.name:
-                if self.app.roll_mode == 'application':
-                    self.update_player_tiles(previous_owner, 1)
-            self.app.tile_owners[(x, y)] = self.app.selected_player.name
+            # Get all affected coordinates from flood fill
+            filled_coords = flood_fill(self.app.map_image, x, y, target_color, replacement_color)
+            
+            # Update tile owners for all affected coordinates
+            for coord in filled_coords:
+                previous_owner = self.app.tile_owners.get(coord)
+                if previous_owner and previous_owner != self.app.selected_player.name:
+                    if self.app.roll_mode == 'application':
+                        self.update_player_tiles(previous_owner, 1)
+                self.app.tile_owners[coord] = self.app.selected_player.name
 
         elif self.app.mode == 'erase':
             target_color = self.app.map_image.getpixel((x, y))
             replacement_color = self.app.original_map_image.getpixel((x, y))
-            if (x, y) in self.app.tile_owners:
-                player_name = self.app.tile_owners.pop((x, y))
-                if self.app.roll_mode == 'application':
-                    self.update_player_tiles(player_name, 1)
+            
+            # Get all affected coordinates from flood fill
+            filled_coords = flood_fill(self.app.map_image, x, y, target_color, replacement_color)
+            
+            # Remove all affected coordinates from tile_owners
+            for coord in filled_coords:
+                if coord in self.app.tile_owners:
+                    previous_owner = self.app.tile_owners.pop(coord)
+                    if self.app.roll_mode == 'application':
+                        self.update_player_tiles(previous_owner, 1)
+        
+        # Force immediate resource recalculation after any map change
+        if self.app.roll_mode == 'tregonia':
+            self.app.update_player_resources()
+            
+            # Update all relevant displays
+            if hasattr(self.app.current_screen, 'update_player_boxes'):
+                self.app.current_screen.update_player_boxes()
+            elif isinstance(self.app.current_screen, GameScreen):
+                for widget in self.app.master.winfo_children():
+                    if isinstance(widget, tk.Frame):
+                        for child in widget.winfo_children():
+                            if isinstance(child, PlayersScreen):
+                                child.update_player_boxes()
+                                break
 
-        flood_fill(self.app.map_image, x, y, target_color, replacement_color)
         self.display_map_image()
         if hasattr(self.app.current_screen, 'update_player_list'):
             self.app.current_screen.update_player_list()

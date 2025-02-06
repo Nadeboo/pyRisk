@@ -26,18 +26,15 @@ class ResourceCounter(tk.Frame):
         self.value_label.pack(side=tk.LEFT)
         tk.Button(counter_frame, text="+", command=self.increment).pack(side=tk.LEFT)
         
-        # Per turn increase display and control
+        # Per turn display (read-only)
         per_turn_frame = tk.Frame(self, bg='white')
         per_turn_frame.pack(fill=tk.X)
         tk.Label(per_turn_frame, text="/turn:", font=("Courier", 10), bg='white').pack(side=tk.LEFT)
+        self.per_turn_label = tk.Label(per_turn_frame, text="0", font=("Courier", 10), bg='white')
+        self.per_turn_label.pack(side=tk.LEFT)
         
-        self.per_turn_var = tk.StringVar(value=str(self.get_per_turn()))
-        vcmd = (self.register(self.validate_per_turn), '%P')
-        per_turn_entry = tk.Entry(per_turn_frame, textvariable=self.per_turn_var, width=3, 
-                                validate='all', validatecommand=vcmd)
-        per_turn_entry.pack(side=tk.LEFT)
-        
-        self.per_turn_var.trace('w', self.on_per_turn_change)
+        # Initial update
+        self.update_display()
         
     def validate_per_turn(self, new_value):
         if new_value == "":
@@ -62,9 +59,20 @@ class ResourceCounter(tk.Frame):
     def decrement(self):
         self.set_value(self.get_value() - 1)
         self.update_display()
+
+    def update_per_turn_display(self):
+        """Update the display of the calculated per-turn value"""
+        calculated = self.get_per_turn()
+        if calculated > 0:
+            self.per_turn_display.config(text=f"(+{calculated} from tiles)")
+        else:
+            self.per_turn_display.config(text="")
         
     def update_display(self):
+        """Update both the current value and per-turn displays"""
         self.value_label.config(text=str(self.get_value()))
+        per_turn = self.get_per_turn()
+        self.per_turn_label.config(text=str(per_turn))
 
 class PlayersScreen:
     def __init__(self, parent, app):
@@ -78,6 +86,17 @@ class PlayersScreen:
         self.races = ["HUMAN", "FAE", "WIZARD", "MERFOLK", "DWARF", "GIANT", "ORC"]
         
         self.setup_widgets()
+
+    def update_player_boxes(self):
+        """Update all player boxes to reflect current values"""
+        # Find all ResourceCounter widgets and update them
+        def update_counters(widget):
+            if isinstance(widget, ResourceCounter):
+                widget.update_display()
+            for child in widget.winfo_children():
+                update_counters(child)
+        
+        update_counters(self.grid_frame)
 
     def setup_widgets(self):
             # Button frame at the bottom

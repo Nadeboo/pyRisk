@@ -31,6 +31,8 @@ class MSPaintRiskEditor:
         self.setup_ui()
         self.initialize_variables()
         self.show_start_screen()  # Start with the StartScreen
+        self.resource_tiles = {}
+        self.RESOURCE_COLOR = (255, 255, 0)  # RGB for #45AD22
 
     def initialize_variables(self):
         self.game_name = "Untitled Game"
@@ -97,6 +99,65 @@ class MSPaintRiskEditor:
             btn = tk.Button(self.toolbar, text=text, command=cmd)
             btn.pack(side=tk.LEFT, padx=2, pady=2)
 
+
+    def scan_for_resource_tiles(self):
+        """Scan the map for resource tiles based on color, grouping adjacent pixels"""
+        if not self.map_image or self.roll_mode != 'tregonia':
+            return
+            
+        self.resource_tiles.clear()
+        pixels = self.map_image.load()
+        map_width, map_height = self.map_image.size
+        
+        # Keep track of which pixels we've checked
+        checked_pixels = set()
+
+        # Find all resource structures
+        resource_structures = []
+        for x in range(map_width):
+            for y in range(map_height):
+                if (x, y) not in checked_pixels:
+                    pixel = pixels[x, y]
+                    if len(pixel) == 4:
+                        pixel = pixel[:3]
+                    
+                    if pixel == self.RESOURCE_COLOR:
+                        # Found a new resource structure
+                        connected_pixels = self.find_connected_resource(x, y, pixels, checked_pixels, map_width, map_height)
+                        if connected_pixels:
+                            # Calculate the center of the structure
+                            avg_x = sum(x for x, _ in connected_pixels) // len(connected_pixels)
+                            avg_y = sum(y for _, y in connected_pixels) // len(connected_pixels)
+                            # Store the center as the resource location
+                            self.resource_tiles[(avg_x, avg_y)] = {'type': 'gold', 'amount': 1}
+                            resource_structures.append(connected_pixels)
+        
+        print(f"Found {len(resource_structures)} distinct resource structures")
+
+    def find_connected_resource(self, x, y, pixels, checked_pixels, map_width, map_height):
+        """Find all connected resource pixels starting from x,y"""
+        if (x, y) in checked_pixels:
+            return set()
+            
+        pixel = pixels[x, y]
+        if len(pixel) == 4:
+            pixel = pixel[:3]
+            
+        if pixel != self.RESOURCE_COLOR:
+            return set()
+            
+        # This is a resource pixel we haven't checked
+        connected = {(x, y)}
+        checked_pixels.add((x, y))
+        
+        # Check adjacent pixels
+        for dx, dy in [(0,1), (1,0), (0,-1), (-1,0)]:
+            new_x, new_y = x + dx, y + dy
+            if 0 <= new_x < map_width and 0 <= new_y < map_height:
+                connected.update(self.find_connected_resource(new_x, new_y, pixels, checked_pixels, map_width, map_height))
+                
+        return connected
+
     def show_start_screen(self):
         self.switch_screen(StartScreen)
 
@@ -145,6 +206,10 @@ class MSPaintRiskEditor:
                 self.original_map_image = self.map_image.copy()
                 self.tile_owners = {}
                 
+                # Scan for resource tiles if in Tregonia mode
+                if self.roll_mode == 'tregonia':
+                    self.scan_for_resource_tiles()
+                
                 if isinstance(self.current_screen, GameScreen):
                     self.current_screen.display_map_image()
                 else:
@@ -153,11 +218,7 @@ class MSPaintRiskEditor:
                 self.save_current_map_state()
                 self.map_history.clear()
                 
-            except AttributeError:
-                # Silently continue if we get an attribute error
-                pass
             except Exception as e:
-                # Still show other types of errors that might be important
                 messagebox.showerror("Error Loading Image", str(e))
 
 
@@ -191,6 +252,40 @@ class MSPaintRiskEditor:
         if self.roll_mode == 'tregonia':
             game_state.save_unit_state(self.units)
         self.game_states.append(game_state)
+
+    def update_player_resources(self):
+        """Update resource gains for all players based on controlled tiles"""
+        if self.roll_mode != 'tregonia':
+            return
+            
+        # Reset resource gains
+        for player in self.players:
+            player.gold_per_turn = 0
+        
+        # Track which resource structures each player has claimed
+        claimed_structures = set()
+        map_width, map_height = self.map_image.size
+        
+        # Check each resource tile
+        for (x, y), resource_info in self.resource_tiles.items():
+            # Define the area to check (100x100 pixels centered on resource)
+            min_x = max(0, x - 50)
+            max_x = min(map_width, x + 50)
+            min_y = max(0, y - 50)
+            max_y = min(map_height, y + 50)
+            
+            # Look for any owned tiles in this area
+            for check_x in range(min_x, max_x):
+                for check_y in range(min_y, max_y):
+                    owner = self.tile_owners.get((check_x, check_y))
+                    if owner and (x, y) not in claimed_structures:  # If tile is owned and resource not yet claimed
+                        player = next((p for p in self.players if p.name == owner), None)
+                        if player:
+                            claimed_structures.add((x, y))
+                            player.gold_per_turn += 1
+                            break  # Stop checking this area once resource is claimed
+                if (x, y) in claimed_structures:
+                    break  # Stop checking if resource already claimed
 
     def load_game_state(self, state):
         """Load a specific game state"""

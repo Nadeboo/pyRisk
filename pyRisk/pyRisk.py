@@ -257,35 +257,33 @@ class MSPaintRiskEditor:
         """Update resource gains for all players based on controlled tiles"""
         if self.roll_mode != 'tregonia':
             return
-            
-        # Reset resource gains
+                
+        print("\nUpdating player resources:")
+        
+        # Reset resource gains for all players
         for player in self.players:
             player.gold_per_turn = 0
-        
-        # Track which resource structures each player has claimed
-        claimed_structures = set()
-        map_width, map_height = self.map_image.size
-        
-        # Check each resource tile
-        for (x, y), resource_info in self.resource_tiles.items():
-            # Define the area to check (100x100 pixels centered on resource)
-            min_x = max(0, x - 50)
-            max_x = min(map_width, x + 50)
-            min_y = max(0, y - 50)
-            max_y = min(map_height, y + 50)
+            player.mana_per_turn = 0
+            print(f"Reset {player.name}'s resources to 0")
             
-            # Look for any owned tiles in this area
-            for check_x in range(min_x, max_x):
-                for check_y in range(min_y, max_y):
-                    owner = self.tile_owners.get((check_x, check_y))
-                    if owner and (x, y) not in claimed_structures:  # If tile is owned and resource not yet claimed
-                        player = next((p for p in self.players if p.name == owner), None)
-                        if player:
-                            claimed_structures.add((x, y))
-                            player.gold_per_turn += 1
-                            break  # Stop checking this area once resource is claimed
-                if (x, y) in claimed_structures:
-                    break  # Stop checking if resource already claimed
+        # Check each resource tile
+        print(f"Processing {len(self.resource_tiles)} resource tiles")
+        for pos, resource_info in self.resource_tiles.items():
+            owner = resource_info.get('owner')
+            resource_type = resource_info.get('type')
+            
+            print(f"Resource at {pos}: type={resource_type}, owner={owner}")
+            
+            if owner and resource_type:
+                player = next((p for p in self.players if p.name == owner), None)
+                if player:
+                    if resource_type == 'gold':
+                        player.gold_per_turn += 1
+                        print(f"Added 1 gold/turn to {player.name}")
+                    elif resource_type == 'mana':
+                        player.mana_per_turn += 1
+                        print(f"Added 1 mana/turn to {player.name}")
+                    print(f"{player.name} now has {player.gold_per_turn} gold/turn and {player.mana_per_turn} mana/turn")
 
     def load_game_state(self, state):
         """Load a specific game state"""

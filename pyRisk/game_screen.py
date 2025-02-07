@@ -1,10 +1,12 @@
 # game_screen.py
 
+
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import ttk, messagebox  # Add ttk here
 from PIL import ImageTk, ImageDraw, Image, ImageFont
 from utils import flood_fill
 from players_screen import PlayersScreen
+from utils import check_territory_in_radius
 class GameScreen:
     def __init__(self, parent, app):
         self.parent = parent
@@ -19,16 +21,28 @@ class GameScreen:
         if self.app.map_image:
             self.display_map_image()
         self.bind_events()
+        self.resource_paint_mode = None  # None, 'unactivated', 'gold', or 'mana'
+        self.RESOURCE_COLORS = {
+            'unactivated': (0, 255, 0),
+            'gold': (255, 255, 0),
+            'mana': (0, 255, 255)
+        }
 
     def setup_sidebar(self):
         self.sidebar = tk.Frame(self.frame, width=200, bg='lightgrey')
         self.sidebar.pack(fill=tk.Y, side=tk.LEFT)
+        
+        # Turn information
         self.turn_label = tk.Label(self.sidebar, text=f"Turn: {self.app.current_turn}")
         self.turn_label.pack(pady=5)
+        
+        # Core game buttons
         self.next_turn_button = tk.Button(self.sidebar, text="Next Turn", command=self.on_next_turn)
         self.next_turn_button.pack(pady=5)
+        
         self.mode_button = tk.Button(self.sidebar, text="Switch to Erase Mode", command=self.toggle_mode)
         self.mode_button.pack(pady=5)
+        
         self.undo_button = tk.Button(self.sidebar, text="Undo", command=self.undo)
         self.undo_button.pack(pady=5)
         
@@ -41,9 +55,49 @@ class GameScreen:
             )
             self.unit_mode_button.pack(pady=5)
 
+        # Player selection section
         self.select_player_label = tk.Label(self.sidebar, text="Select Player:")
         self.select_player_label.pack(pady=5)
         self.update_player_buttons()
+
+        # Separator between player and resource sections
+        ttk.Separator(self.sidebar, orient='horizontal').pack(fill='x', pady=10)
+
+        # Resource painting section
+        tk.Label(self.sidebar, text="Resource Painting:").pack(pady=5)
+        
+        # Add resource painting buttons
+        self.resource_buttons = []
+        for resource_type in ['unactivated', 'gold', 'mana']:
+            btn = tk.Button(
+                self.sidebar,
+                text=resource_type.capitalize(),
+                command=lambda t=resource_type: self.select_resource_paint(t)
+            )
+            btn.pack(fill=tk.X, padx=5, pady=2)
+            self.resource_buttons.append(btn)
+
+    def select_resource_paint(self, resource_type):
+        """Handle resource paint button selection"""
+        # If this resource type is already selected, deselect it
+        if self.resource_paint_mode == resource_type:
+            self.resource_paint_mode = None
+        else:
+            self.resource_paint_mode = resource_type
+            # Deselect player when entering resource paint mode
+            self.app.selected_player = None
+            
+        # Update button appearances
+        self.highlight_selected_player_button()  # Unhighlight player buttons
+        self.highlight_resource_button()
+
+    def highlight_resource_button(self):
+        """Update button appearances based on selected resource type"""
+        for btn in self.resource_buttons:
+            if btn['text'].lower() == self.resource_paint_mode:
+                btn.config(relief=tk.SUNKEN)
+            else:
+                btn.config(relief=tk.RAISED)
 
     def setup_canvas(self):
         self.canvas_frame = tk.Frame(self.frame)
@@ -127,6 +181,54 @@ class GameScreen:
             
             # Display the popup menu at mouse position
             popup.tk_popup(event.x_root, event.y_root)
+
+    def update_resource_ownership(self):
+        """Update ownership of all resources based on surrounding territory"""
+        if not self.app.map_image or self.app.roll_mode != 'tregonia':
+            print("Resource ownership update skipped - no map or wrong mode")
+            return
+            
+        print("\n=== Starting Resource Ownership Update ===")
+        print(f"Total resources to check: {len(self.app.resource_tiles)}")
+        print(f"Current tile owners count: {len(self.app.tile_owners)}")
+        
+        changes_made = False
+        for pos, resource_info in self.app.resource_tiles.items():
+            x, y = pos
+            print(f"\nChecking resource at position {pos}")
+            print(f"Current resource info: {resource_info}")
+            
+            # Check territory in radius around resource
+            dominant_player, territory_count = check_territory_in_radius(
+                self.app.map_image,
+                self.app.tile_owners,
+                x, y,
+                radius=100
+            )
+            
+            current_owner = resource_info.get('owner')
+            print(f"Current owner: {current_owner}")
+            print(f"Detected dominant player: {dominant_player}")
+            
+            if dominant_player != current_owner:
+                print(f"Ownership change detected!")
+                resource_info['owner'] = dominant_player
+                changes_made = True
+                if dominant_player:
+                    print(f"Resource at {pos} claimed by {dominant_player} with {territory_count} surrounding tiles")
+                else:
+                    print(f"Resource at {pos} no longer controlled by any player")
+        
+        print("\n=== Resource Update Summary ===")
+        print(f"Changes made: {changes_made}")
+        
+        if changes_made:
+            print("Updating player resources and display...")
+            self.app.update_player_resources()
+            self.display_map_image()
+            if hasattr(self.app.current_screen, 'update_player_list'):
+                self.app.current_screen.update_player_list()
+
 
     def remove_unit_from_army(self, army, unit):
         """Remove a single unit from an army"""
@@ -262,6 +364,12 @@ class GameScreen:
         self.highlight_selected_player_button()
 
     def select_player(self, player):
+        """Handle player selection"""
+        # If selecting a player, disable resource paint mode
+        if self.resource_paint_mode is not None:
+            self.resource_paint_mode = None
+            self.highlight_resource_button()
+            
         self.app.selected_player = player
         self.highlight_selected_player_button()
 
@@ -363,22 +471,34 @@ class GameScreen:
         self.handle_map_coloring(x, y)
 
     def handle_map_coloring(self, x, y):
+        """Handle map coloring using region-based approach"""
         self.app.map_history.append(self.app.map_image.copy())
         if len(self.app.map_history) > self.app.max_history:
             self.app.map_history.pop(0)
+
+        # Get current pixel color
+        target_color = self.app.map_image.getpixel((x, y))
+        if len(target_color) == 4:
+            target_color = target_color[:3]
+
+        if self.resource_paint_mode:
+            replacement_color = self.RESOURCE_COLORS[self.resource_paint_mode]
+            region = flood_fill(self.app.map_image, x, y, target_color, replacement_color)
+            if region:
+                center = region['center']
+                self.app.resource_tiles[center] = {
+                    'type': self.resource_paint_mode,
+                    'owner': None
+                }
+            self.display_map_image()
+            return
 
         if self.app.mode == 'color':
             if self.app.selected_player is None:
                 messagebox.showwarning("No Player Selected", "Please select a player before coloring.")
                 return
 
-            target_color = self.app.map_image.getpixel((x, y))
-            replacement_color = (
-                int(self.app.selected_player.color[0]),
-                int(self.app.selected_player.color[1]),
-                int(self.app.selected_player.color[2]),
-                255
-            )
+            replacement_color = tuple(int(c) for c in self.app.selected_player.color)
 
             if self.app.roll_mode == 'application':
                 roll_info = self.app.player_rolls.get(self.app.selected_player.name, ("", 0, 0))
@@ -388,74 +508,50 @@ class GameScreen:
                     return
                 self.update_player_tiles(self.app.selected_player.name, -1)
 
-            # Get all affected coordinates from flood fill
-            filled_coords = flood_fill(self.app.map_image, x, y, target_color, replacement_color)
-            
-            # Update tile owners for all affected coordinates
-            for coord in filled_coords:
-                previous_owner = self.app.tile_owners.get(coord)
-                if previous_owner and previous_owner != self.app.selected_player.name:
-                    if self.app.roll_mode == 'application':
-                        self.update_player_tiles(previous_owner, 1)
-                self.app.tile_owners[coord] = self.app.selected_player.name
+            # Check for previous owner of this region
+            region = flood_fill(self.app.map_image, x, y, target_color, replacement_color)
+            if region:
+                # Remove previous ownership if it exists
+                for pos in region['boundary']:
+                    previous_owner = self.app.tile_owners.get(pos)
+                    if previous_owner and previous_owner != self.app.selected_player.name:
+                        if self.app.roll_mode == 'application':
+                            self.update_player_tiles(previous_owner, 1)
+                        del self.app.tile_owners[pos]
+                
+                # Set new ownership for the entire region
+                for pos in region['boundary']:
+                    self.app.tile_owners[pos] = self.app.selected_player.name
 
         elif self.app.mode == 'erase':
-            target_color = self.app.map_image.getpixel((x, y))
             replacement_color = self.app.original_map_image.getpixel((x, y))
+            if len(replacement_color) == 4:
+                replacement_color = replacement_color[:3]
             
-            # Get all affected coordinates from flood fill
-            filled_coords = flood_fill(self.app.map_image, x, y, target_color, replacement_color)
-            
-            # Remove all affected coordinates from tile_owners
-            for coord in filled_coords:
-                if coord in self.app.tile_owners:
-                    previous_owner = self.app.tile_owners.pop(coord)
-                    if self.app.roll_mode == 'application':
-                        self.update_player_tiles(previous_owner, 1)
-        
-        # Force immediate resource recalculation after any map change
+            region = flood_fill(self.app.map_image, x, y, target_color, replacement_color)
+            if region:
+                for pos in region['boundary']:
+                    if pos in self.app.tile_owners:
+                        player_name = self.app.tile_owners.pop(pos)
+                        if self.app.roll_mode == 'application':
+                            self.update_player_tiles(player_name, 1)
+
+        # Always update resource ownership
         if self.app.roll_mode == 'tregonia':
-            self.app.update_player_resources()
+            self.update_resource_ownership()
             
-            # Update all relevant displays
-            if hasattr(self.app.current_screen, 'update_player_boxes'):
-                self.app.current_screen.update_player_boxes()
-            elif isinstance(self.app.current_screen, GameScreen):
-                for widget in self.app.master.winfo_children():
-                    if isinstance(widget, tk.Frame):
-                        for child in widget.winfo_children():
-                            if isinstance(child, PlayersScreen):
-                                child.update_player_boxes()
-                                break
+            # Update displays
+            for widget in self.app.master.winfo_children():
+                if isinstance(widget, tk.Frame):
+                    for child in widget.winfo_children():
+                        if isinstance(child, PlayersScreen):
+                            child.update_player_boxes()
+                            break
 
         self.display_map_image()
         if hasattr(self.app.current_screen, 'update_player_list'):
             self.app.current_screen.update_player_list()
-        self.update_player_buttons()
-
-    def handle_unit_placement(self, x, y):
-        if self.selected_unit is None:
-            # Try to select a unit near the click
-            for unit in self.app.units:
-                if unit.position:
-                    unit_x, unit_y = unit.position
-                    if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
-                        self.selected_unit = unit
-                        break
-            else:
-                # No existing unit was clicked, look for first unplaced unit
-                for unit in self.app.units:
-                    if unit.position is None:
-                        self.selected_unit = unit
-                        self.selected_unit.position = (x, y)
-                        self.selected_unit = None
-                        self.display_map_image()
-                        break
-        else:
-            # Move selected unit to new position
-            self.selected_unit.position = (x, y)
-            self.selected_unit = None
-            self.display_map_image()
+            self.update_player_buttons()
 
     def update_player_tiles(self, player_name, change):
         if player_name in self.app.player_rolls:

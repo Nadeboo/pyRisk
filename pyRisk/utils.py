@@ -9,57 +9,49 @@ def color_distance(color1, color2):
     c2 = color2[:3]
     return sum((a - b) ** 2 for a, b in zip(c1, c2)) ** 0.5
 
-# In utils.py, modify flood_fill to track affected coordinates:
-# In utils.py, modify flood_fill:
-def check_territory_in_radius(image, tile_owners, center_x, center_y, radius=5):
+def find_connected_region(pixels, start_x, start_y, target_color, width, height, tolerance=5):
+    """Find a connected region of similar colors starting from a point"""
+    if start_x < 0 or start_x >= width or start_y >= height:
+        return set()
+        
+    visited = {(start_x, start_y)}
+    stack = [(start_x, start_y)]
+    region = {(start_x, start_y)}
+    
+    while stack:
+        x, y = stack.pop()
+        
+        # Check 4-connected neighbors
+        for nx, ny in [(x+1, y), (x-1, y), (x, y+1), (x, y-1)]:
+            if (nx, ny) in visited or nx < 0 or nx >= width or ny < 0 or ny >= height:
+                continue
+                
+            visited.add((nx, ny))
+            current_color = pixels[nx, ny]
+            if len(current_color) == 4:
+                current_color = current_color[:3]
+                
+            if color_distance(current_color, target_color) <= tolerance:
+                stack.append((nx, ny))
+                region.add((nx, ny))
+                
+    return region
+
+def check_territory_in_radius(image, tile_owners, center_x, center_y, radius=100):
     """
     Check for player territory within a radius of a point.
-    Returns the dominant player in the area (the one with most territory).
+    Handles territory regions instead of individual pixels.
     
     Args:
         image: PIL Image object
         tile_owners: Dictionary mapping (x,y) to player names
         center_x, center_y: Center coordinates to check around
-        radius: Radius to check (default 5 pixels)
+        radius: Radius to check (default 100 pixels)
         
     Returns:
         tuple: (dominant_player, territory_count)
-        where dominant_player is the name of the player with most territory in radius,
+        where dominant_player is the name of the player with most territory regions,
         or None if no player has territory in the radius
-    """
-    player_tiles = {}  # Count of tiles per player in radius
-    width, height = image.size
-    
-    # Check all points in the square around the center
-    for dx in range(-radius, radius + 1):
-        for dy in range(-radius, radius + 1):
-            x = center_x + dx
-            y = center_y + dy
-            
-            # Skip if outside image bounds
-            if x < 0 or x >= width or y < 0 or y >= height:
-                continue
-                
-            # Skip if outside circle radius
-            if (dx*dx + dy*dy) > radius*radius:
-                continue
-                
-            # Check if this tile is owned
-            owner = tile_owners.get((x, y))
-            if owner:
-                player_tiles[owner] = player_tiles.get(owner, 0) + 1
-    
-    # Find player with most territory
-    if not player_tiles:
-        return None, 0
-        
-    dominant_player = max(player_tiles.items(), key=lambda x: x[1])
-    return dominant_player[0], dominant_player[1]
-
-def check_territory_in_radius(image, tile_owners, center_x, center_y, radius=100):
-    """
-    Check for player territory within a radius of a point.
-    Now handles territory regions instead of individual pixels.
     """
     player_regions = {}  # Count of regions per player
     
@@ -101,44 +93,27 @@ def check_territory_in_radius(image, tile_owners, center_x, center_y, radius=100
     dominant_player = max(player_regions.items(), key=lambda x: x[1])
     return dominant_player[0], dominant_player[1]
 
-def find_connected_region(pixels, start_x, start_y, target_color, width, height, tolerance=5):
-    """Find a connected region of similar colors starting from a point"""
-    if start_x < 0 or start_x >= width or start_y >= height:
-        return set()
-        
-    visited = {(start_x, start_y)}
-    stack = [(start_x, start_y)]
-    region = {(start_x, start_y)}
-    
-    while stack:
-        x, y = stack.pop()
-        
-        # Check 4-connected neighbors
-        for nx, ny in [(x+1, y), (x-1, y), (x, y+1), (x, y-1)]:
-            if (nx, ny) in visited or nx < 0 or nx >= width or ny < 0 or ny >= height:
-                continue
-                
-            visited.add((nx, ny))
-            current_color = pixels[nx, ny]
-            if len(current_color) == 4:
-                current_color = current_color[:3]
-                
-            if color_distance(current_color, target_color) <= tolerance:
-                stack.append((nx, ny))
-                region.add((nx, ny))
-                
-    return region
-
 def flood_fill(image, x, y, target_color, replacement_color, tolerance=5):
     """
     Region-based flood fill algorithm.
     Returns the region information for territory tracking.
+    
+    Args:
+        image: PIL Image object
+        x, y: Starting coordinates
+        target_color: Color to replace
+        replacement_color: New color
+        tolerance: Color matching tolerance
+        
+    Returns:
+        dict: Region information containing center and boundary points,
+        or None if no region was filled
     """
     pixels = image.load()
     width, height = image.size
     
     if x < 0 or x >= width or y < 0 or y >= height:
-        return set()
+        return None
 
     # Find the connected region
     region = find_connected_region(pixels, x, y, target_color, width, height, tolerance)

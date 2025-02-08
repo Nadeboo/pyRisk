@@ -13,25 +13,195 @@ class GameScreen:
         self.app = app
         self.frame = tk.Frame(parent)
         self.frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Initialize state variables first
         self.selected_unit = None
         self.unit_mode = False
         self.zoom_level = 1.0
-        self.setup_sidebar()
+        self.resource_paint_mode = None
+        self.RESOURCE_COLORS = {
+            'unactivated': (0, 255, 0),
+            'gold': (255, 255, 0),
+            'mana': (0, 255, 255)
+        }
+        self.player_buttons = []  # Initialize this before setup_sidebar uses it
+
+        # Create main layout container
+        self.main_container = tk.Frame(self.frame)
+        self.main_container.pack(fill=tk.BOTH, expand=True)
+
+        # Create all container frames first
+        self.sidebar = tk.Frame(self.main_container, width=150, bg='lightgrey')
+        self.map_container = tk.Frame(self.main_container)
+        self.mirror_container = tk.Frame(self.main_container, width=300)
+
+        # Then pack them in order
+        self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        self.sidebar.pack_propagate(False)
+        self.map_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.mirror_container.pack(side=tk.RIGHT, fill=tk.Y)
+        self.mirror_container.pack_propagate(False)
+
+        # Now setup the components
         self.setup_canvas()
+        self.setup_sidebar()
+        self.setup_mirror_panels()
+
+        # Final initialization steps
         if self.app.map_image:
             self.display_map_image()
         self.bind_events()
-        self.resource_paint_mode = None  # None, 'unactivated', 'gold', or 'mana'
+        self.resource_paint_mode = None
         self.RESOURCE_COLORS = {
             'unactivated': (0, 255, 0),
             'gold': (255, 255, 0),
             'mana': (0, 255, 255)
         }
 
-    def setup_sidebar(self):
-        self.sidebar = tk.Frame(self.frame, width=200, bg='lightgrey')
-        self.sidebar.pack(fill=tk.Y, side=tk.LEFT)
+    def setup_mirror_panels(self):
+        """Setup the mirrored players, alliances, and armies panels"""
+        # Players overview
+        tk.Label(self.mirror_container, text="Players", font=("Arial", 8, "bold")).pack(pady=(2,0))
+        self.players_mirror = tk.Frame(self.mirror_container)
+        self.players_mirror.pack(fill=tk.X)
         
+        # Separator
+        ttk.Separator(self.mirror_container, orient='horizontal').pack(fill='x', pady=2)
+        
+        # Alliances overview
+        tk.Label(self.mirror_container, text="Alliances", font=("Arial", 8, "bold")).pack(pady=(2,0))
+        self.alliances_mirror = tk.Frame(self.mirror_container)
+        self.alliances_mirror.pack(fill=tk.X)
+        
+        # Only show armies in Tregonia mode
+        if self.app.roll_mode == 'tregonia':
+            ttk.Separator(self.mirror_container, orient='horizontal').pack(fill='x', pady=2)
+            tk.Label(self.mirror_container, text="Armies", font=("Arial", 8, "bold")).pack(pady=(2,0))
+            self.armies_mirror = tk.Frame(self.mirror_container)
+            self.armies_mirror.pack(fill=tk.X)
+        
+        self.update_mirror_panels()
+
+    def update_mirror_panels(self):
+        """Update the contents of mirror panels"""
+        # Clear existing content
+        for widget in self.players_mirror.winfo_children():
+            widget.destroy()
+        for widget in self.alliances_mirror.winfo_children():
+            widget.destroy()
+        if hasattr(self, 'armies_mirror'):
+            for widget in self.armies_mirror.winfo_children():
+                widget.destroy()
+
+        # Update players mirror with minimal layout
+        for player in self.app.players:
+            player_frame = tk.Frame(self.players_mirror)
+            player_frame.pack(fill=tk.X, pady=1)
+            
+            # Color indicator and name
+            color_box = tk.Frame(player_frame, bg='#{:02x}{:02x}{:02x}'.format(*player.color), 
+                            width=8, height=8)
+            color_box.pack(side=tk.LEFT, padx=1)
+            color_box.pack_propagate(False)
+            
+            tk.Label(player_frame, text=player.name, font=("Arial", 7)).pack(side=tk.LEFT, padx=1)
+            
+            # Compact resource display
+            resources = f"G:{player.gold}+{player.gold_per_turn}"
+            tk.Label(player_frame, text=resources, font=("Arial", 7)).pack(side=tk.RIGHT, padx=1)
+
+        # Alliances and NAPs in minimal format
+        alliances = []
+        for player in self.app.players:
+            for ally in player.allies:
+                if player.name < ally.name:
+                    tk.Label(self.alliances_mirror, 
+                            text=f"{player.name}↔{ally.name}", 
+                            font=("Arial", 7)).pack(anchor=tk.W)
+
+        if not self.alliances_mirror.winfo_children():
+            tk.Label(self.alliances_mirror, text="No alliances", 
+                    font=("Arial", 7)).pack()
+
+        # NAPs
+        naps = []
+        for player in self.app.players:
+            for nap in player.naps:
+                if player.name < nap.name:
+                    naps.append(f"{player.name}↔{nap.name}")
+        
+        if naps:
+            ttk.Separator(self.alliances_mirror, orient='horizontal').pack(fill='x', pady=2)
+            tk.Label(self.alliances_mirror, text="NAPs:", 
+                    font=("Arial", 7, "bold")).pack(anchor=tk.W)
+            for nap in naps:
+                tk.Label(self.alliances_mirror, text=nap, 
+                        font=("Arial", 7)).pack(anchor=tk.W)
+
+        # Update armies mirror (only in Tregonia mode)
+        if self.app.roll_mode == 'tregonia' and hasattr(self, 'armies_mirror'):
+            # Get all sub-units to exclude them from top-level display
+            all_sub_units = set()
+            for unit in self.app.units:
+                for sub_unit in unit.sub_units:
+                    all_sub_units.add(sub_unit.unit_id)
+                    
+            # Display only top-level armies
+            for unit in self.app.units:
+                if unit.unit_id not in all_sub_units:
+                    # Create frame for this army
+                    army_frame = tk.Frame(self.armies_mirror, bg='white')
+                    army_frame.pack(fill=tk.X, pady=1, padx=2)
+                    
+                    # Left side: Army ID and position indicator
+                    info_frame = tk.Frame(army_frame, bg='white')
+                    info_frame.pack(side=tk.LEFT)
+                    
+                    id_label = tk.Label(info_frame, 
+                                    text=f"#{unit.unit_id}", 
+                                    font=("Arial", 7),
+                                    bg='white')
+                    id_label.pack(side=tk.LEFT)
+                    
+                    # Add a small dot to indicate if army is placed on map
+                    dot_color = 'green' if unit.position else 'red'
+                    dot = tk.Frame(info_frame, 
+                                width=4, height=4, 
+                                bg=dot_color)
+                    dot.pack(side=tk.LEFT, padx=2)
+                    dot.pack_propagate(False)
+                    
+                    # Right side: Unit composition
+                    if unit.is_army:
+                        # Count units by type
+                        unit_counts = {}
+                        for sub_unit in unit.sub_units:
+                            unit_type = sub_unit.unit_type.shorthand
+                            unit_counts[unit_type] = unit_counts.get(unit_type, 0) + 1
+                        
+                        # Display unit counts
+                        composition = ' '.join(f"{count}{type}" 
+                                            for type, count in sorted(unit_counts.items()))
+                    else:
+                        composition = "Empty"
+                    
+                    tk.Label(army_frame, 
+                            text=composition,
+                            font=("Arial", 7),
+                            bg='white').pack(side=tk.RIGHT)
+                    
+                    # Owner label in center
+                    tk.Label(army_frame,
+                            text=unit.owner,
+                            font=("Arial", 7),
+                            bg='white').pack(side=tk.LEFT, padx=4)
+            
+            if not self.armies_mirror.winfo_children():
+                tk.Label(self.armies_mirror,
+                        text="No armies",
+                        font=("Arial", 7)).pack()
+
+    def setup_sidebar(self):
         # Turn information
         self.turn_label = tk.Label(self.sidebar, text=f"Turn: {self.app.current_turn}")
         self.turn_label.pack(pady=5)
@@ -60,13 +230,8 @@ class GameScreen:
         self.select_player_label.pack(pady=5)
         self.update_player_buttons()
 
-        # Separator between player and resource sections
-        ttk.Separator(self.sidebar, orient='horizontal').pack(fill='x', pady=10)
-
         # Resource painting section
         tk.Label(self.sidebar, text="Resource Painting:").pack(pady=5)
-        
-        # Add resource painting buttons
         self.resource_buttons = []
         for resource_type in ['unactivated', 'gold', 'mana']:
             btn = tk.Button(
@@ -100,17 +265,19 @@ class GameScreen:
                 btn.config(relief=tk.RAISED)
 
     def setup_canvas(self):
-        self.canvas_frame = tk.Frame(self.frame)
-        self.canvas_frame.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        self.canvas_frame = tk.Frame(self.map_container)
+        self.canvas_frame.pack(fill=tk.BOTH, expand=True)
+        
         self.canvas = tk.Canvas(self.canvas_frame, bg='grey')
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
         h_scrollbar = tk.Scrollbar(self.canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
         h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        
         v_scrollbar = tk.Scrollbar(self.canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
         v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
         self.canvas.configure(xscrollcommand=h_scrollbar.set, yscrollcommand=v_scrollbar.set)
-        self.canvas.bind('<Configure>', self.on_canvas_configure)
-
     def toggle_unit_mode(self):
         """Toggle between unit movement mode and regular map editing mode"""
         self.unit_mode = not self.unit_mode
@@ -472,7 +639,12 @@ class GameScreen:
 
     def handle_map_coloring(self, x, y):
         """Handle map coloring using region-based approach"""
-        self.app.map_history.append(self.app.map_image.copy())
+        # Save current state before modification
+        self.app.map_history.append({
+            'image': self.app.map_image.copy(),
+            'tile_owners': self.app.tile_owners.copy(),
+            'resource_tiles': self.app.resource_tiles.copy() if hasattr(self.app, 'resource_tiles') else {}
+        })
         if len(self.app.map_history) > self.app.max_history:
             self.app.map_history.pop(0)
 
@@ -482,15 +654,30 @@ class GameScreen:
             target_color = target_color[:3]
 
         if self.resource_paint_mode:
+            print(f"Resource paint mode active: {self.resource_paint_mode}")  # Debug
             replacement_color = self.RESOURCE_COLORS[self.resource_paint_mode]
+            print(f"Painting with color: {replacement_color}")  # Debug
+            
             region = flood_fill(self.app.map_image, x, y, target_color, replacement_color)
             if region:
+                print(f"Found region with center: {region['center']}")  # Debug
                 center = region['center']
                 self.app.resource_tiles[center] = {
                     'type': self.resource_paint_mode,
                     'owner': None
                 }
+                print(f"Added resource tile at {center}: {self.app.resource_tiles[center]}")  # Debug
+                
+                # Update ownership immediately for the new resource
+                if self.app.roll_mode == 'tregonia':
+                    self.update_resource_ownership()
+                    
             self.display_map_image()
+            
+            # Update any relevant displays
+            if hasattr(self.app.current_screen, 'update_player_list'):
+                self.app.current_screen.update_player_list()
+            self.update_mirror_panels()
             return
 
         if self.app.mode == 'color':
@@ -552,6 +739,7 @@ class GameScreen:
         if hasattr(self.app.current_screen, 'update_player_list'):
             self.app.current_screen.update_player_list()
             self.update_player_buttons()
+        self.update_mirror_panels()  # Update mirrors after map changes
 
     def update_player_tiles(self, player_name, change):
         if player_name in self.app.player_rolls:
@@ -571,14 +759,34 @@ class GameScreen:
             self.mode_button.config(text="Switch to Erase Mode")
 
     def undo(self):
+        """Undo the last map change"""
         if not self.app.map_history:
             messagebox.showinfo("Undo", "No actions to undo.")
             return
-        self.app.map_image = self.app.map_history.pop()
+            
+        # Pop and restore previous state
+        previous_state = self.app.map_history.pop()
+        
+        # Important: Make sure we get a fresh copy of the previous image
+        self.app.map_image = previous_state['image'].copy()
+        self.app.tile_owners = previous_state['tile_owners'].copy()
+        if 'resource_tiles' in previous_state:
+            self.app.resource_tiles = previous_state['resource_tiles'].copy()
+        
+        # Make sure to get a fresh ImageDraw object
         self.app.map_draw = ImageDraw.Draw(self.app.map_image)
+        
+        # Ensure the display is updated
         self.invalidate_display_cache()
         self.display_map_image()
+        
+        # Update all relevant UI elements
         self.update_player_buttons()
+        self.update_mirror_panels()
+        
+        # Update resource ownership if in Tregonia mode
+        if self.app.roll_mode == 'tregonia':
+            self.update_resource_ownership()
 
     def on_next_turn(self):
             """Handle next turn button click"""
@@ -600,6 +808,7 @@ class GameScreen:
             if hasattr(self.app.current_screen, 'update_player_list'):
                 self.app.current_screen.update_player_list()
             self.update_player_buttons()
+            self.update_mirror_panels()  # Update mirrors after turn change
 
     def destroy(self):
         self.canvas.unbind("<Button-1>")

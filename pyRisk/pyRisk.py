@@ -18,6 +18,7 @@ from alliances_screen import AlliancesScreen
 from roll_screen import RollScreen
 from start_screen import StartScreen
 from units_screen import UnitsScreen
+from research_screen import ResearchScreen
 
 
 class MSPaintRiskEditor:
@@ -92,6 +93,7 @@ class MSPaintRiskEditor:
             ("Game", self.show_game_screen),
             ("Players", self.show_players_screen),
             ("Alliances", self.show_alliances_screen),
+            ("Research", self.show_research_screen),  # Add this line
             ("Roll", self.show_roll_screen),
             ("Armies", self.show_units_screen)
         ]
@@ -169,6 +171,9 @@ class MSPaintRiskEditor:
 
     def show_alliances_screen(self):
         self.switch_screen(AlliancesScreen)
+
+    def show_research_screen(self):
+        self.switch_screen(ResearchScreen)
 
     def show_roll_screen(self):
         if self.roll_mode == 'external':

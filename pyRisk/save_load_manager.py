@@ -119,19 +119,28 @@ class SaveLoadManager:
             # Load game states and map
             app.game_states = []
             for path in game_data.get("game_states", []):
-                turn_number = int(os.path.splitext(os.path.basename(path))[0].split('_')[-1])
-                state = GameState(turn_number, path)
-                app.game_states.append(state)
+                try:
+                    turn_number = int(os.path.splitext(os.path.basename(path))[0].split('_')[-1])
+                    state = GameState(turn_number, path)
+                    if os.path.exists(path):  # Only add if the file exists
+                        app.game_states.append(state)
+                except (ValueError, IndexError) as e:
+                    print(f"Warning: Could not load game state from {path}: {e}")
             
             # Load last map state if available
             if app.game_states:
                 last_state = app.game_states[-1]
-                app.map_image = Image.open(last_state.map_image_path)
-                app.map_draw = ImageDraw.Draw(app.map_image)
-                if isinstance(app.current_screen, type(app.GameScreen)):
-                    app.current_screen.display_map_image()
-                else:
-                    app.show_game_screen()
+                try:
+                    app.map_image = Image.open(last_state.map_image_path)
+                    app.map_draw = ImageDraw.Draw(app.map_image)
+                    if hasattr(app.current_screen, 'display_map_image'):
+                        app.current_screen.display_map_image()
+                    else:
+                        app.show_game_screen()
+                except (FileNotFoundError, IOError) as e:
+                    messagebox.showerror("Error Loading Map", 
+                                       f"Could not load map image: {str(e)}")
+                    return
             
             # Load roll table configuration
             roll_table_data = game_data.get("roll_table", {})
@@ -147,29 +156,46 @@ class SaveLoadManager:
             app.all_roll_results = game_data.get("all_roll_results", [])
             app.tile_owners = game_data.get("tile_owners", {})
             
+            # Initialize units list
+            app.units = []
+            app.next_unit_id = 1
+            
             # Load Tregonia-specific data
-            app.units = []  # Reset units list
             if app.roll_mode == 'tregonia':
                 tregonia_data = game_data.get("tregonia_data", {})
+                
+                # Load units
                 for unit_data in tregonia_data.get("units", []):
-                    # Handle position data which could be None or a tuple
-                    position = unit_data.get("position")
-                    if position is not None:
-                        position = tuple(position)  # Convert list to tuple if present
-                        
-                    unit = Unit(
-                        owner=unit_data["owner"],
-                        unit_type=UnitType(unit_data["unit_type"]),
-                        unit_id=unit_data["unit_id"],
-                        position=position
-                    )
-                    app.units.append(unit)
-                    
-                app.next_unit_id = tregonia_data.get("next_unit_id", 1)
-                # If no next_unit_id was saved, calculate it from existing units
-                if app.next_unit_id == 1 and app.units:
-                    app.next_unit_id = max(unit.unit_id for unit in app.units) + 1
+                    try:
+                        # Handle position data which could be None or a tuple
+                        position = unit_data.get("position")
+                        if position is not None:
+                            position = tuple(position)  # Convert list to tuple if present
+                            
+                        unit = Unit(
+                            owner=unit_data["owner"],
+                            unit_type=UnitType(unit_data["unit_type"]),
+                            unit_id=unit_data["unit_id"],
+                            position=position
+                        )
+                        app.units.append(unit)
+                    except (KeyError, ValueError) as e:
+                        print(f"Warning: Could not load unit: {e}")
+                        continue
+                
+                # Safely calculate next_unit_id
+                if app.units:
+                    # Use a list comprehension with a default value to handle invalid unit_ids
+                    valid_ids = [unit.unit_id for unit in app.units if hasattr(unit, 'unit_id')]
+                    app.next_unit_id = (max(valid_ids) + 1) if valid_ids else 1
+                else:
+                    app.next_unit_id = 1
             
             messagebox.showinfo("Game Loaded", "Game has been loaded successfully.")
+            
         except Exception as e:
-            messagebox.showerror("Error Loading Game", f"An error occurred while loading the game:\n{e}")
+            messagebox.showerror("Error Loading Game", 
+                               f"An error occurred while loading the game:\n{str(e)}")
+            # Ensure app is in a valid state even if load fails
+            app.next_unit_id = 1
+            app.units = []

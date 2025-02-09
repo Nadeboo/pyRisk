@@ -19,6 +19,7 @@ from roll_screen import RollScreen
 from start_screen import StartScreen
 from units_screen import UnitsScreen
 from research_screen import ResearchScreen
+from cities_screen import CitiesScreen
 
 
 class MSPaintRiskEditor:
@@ -92,8 +93,9 @@ class MSPaintRiskEditor:
         buttons = [
             ("Game", self.show_game_screen),
             ("Players", self.show_players_screen),
+            ("Cities", self.show_cities_screen),  # Added Cities button
             ("Alliances", self.show_alliances_screen),
-            ("Research", self.show_research_screen),  # Add this line
+            ("Research", self.show_research_screen),
             ("Roll", self.show_roll_screen),
             ("Armies", self.show_units_screen)
         ]
@@ -175,6 +177,9 @@ class MSPaintRiskEditor:
     def show_research_screen(self):
         self.switch_screen(ResearchScreen)
 
+    def show_cities_screen(self):
+        self.switch_screen(CitiesScreen)
+
     def show_roll_screen(self):
         if self.roll_mode == 'external':
             messagebox.showinfo("Disabled", "Rolling is disabled in external roll mode.")
@@ -201,36 +206,88 @@ class MSPaintRiskEditor:
         self.current_screen = screen_class(self.content_frame, self)
 
     def import_map(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png;*.jpg;*.jpeg")])
-        if file_path:
-            try:
-                # Load image
-                img = Image.open(file_path)
-                self.map_image = img.convert("RGBA")
-                self.map_draw = ImageDraw.Draw(self.map_image)
-                self.original_map_image = self.map_image.copy()
-                self.tile_owners = {}
+        """Import and initialize a new map image with detailed error logging to file"""
+        import traceback
+        import datetime
+        
+        # Create error log file
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = f"error_log_{timestamp}.txt"
+        
+        try:
+            file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png;*.jpg;*.jpeg")])
+            
+            if not file_path:
+                return
                 
-                # Scan for resource tiles if in Tregonia mode
-                if self.roll_mode == 'tregonia':
-                    self.scan_for_resource_tiles()
+            # Log start of import
+            with open(log_file, 'w') as f:
+                f.write(f"Starting map import from: {file_path}\n")
+                f.write(f"Current mode: {self.roll_mode}\n")
+                f.write(f"Number of players: {len(self.players)}\n")
                 
-                if isinstance(self.current_screen, GameScreen):
-                    self.current_screen.display_map_image()
-                else:
-                    self.show_game_screen()
-                    
-                self.save_current_map_state()
-                self.map_history.clear()
+            # Load image
+            img = Image.open(file_path)
+            
+            # Log image details
+            with open(log_file, 'a') as f:
+                f.write(f"Image loaded successfully.\n")
+                f.write(f"Image size: {img.size}\n")
+                f.write(f"Image mode: {img.mode}\n")
+            
+            self.map_image = img.convert("RGBA")
+            self.map_draw = ImageDraw.Draw(self.map_image)
+            self.original_map_image = self.map_image.copy()
+            self.tile_owners = {}
+            
+            # Log conversion success
+            with open(log_file, 'a') as f:
+                f.write("Image converted to RGBA and initialized successfully\n")
+            
+            # Scan for resource tiles if in Tregonia mode
+            if self.roll_mode == 'tregonia':
+                with open(log_file, 'a') as f:
+                    f.write("Scanning for resource tiles...\n")
+                self.scan_for_resource_tiles()
+            
+            if isinstance(self.current_screen, GameScreen):
+                self.current_screen.display_map_image()
+            else:
+                self.show_game_screen()
                 
-            except Exception as e:
-                messagebox.showerror("Error Loading Image", str(e))
+            self.save_current_map_state()
+            self.map_history.clear()
+            
+            with open(log_file, 'a') as f:
+                f.write("Map import completed successfully\n")
+            
+        except Exception as e:
+            # Log the full error details
+            with open(log_file, 'a') as f:
+                f.write("\nERROR OCCURRED:\n")
+                f.write(f"Error type: {type(e).__name__}\n")
+                f.write(f"Error message: {str(e)}\n")
+                f.write("\nFull stack trace:\n")
+                traceback.print_exc(file=f)
+                
+                # Log additional state information
+                f.write("\nApplication State:\n")
+                f.write(f"Roll mode: {self.roll_mode}\n")
+                f.write(f"Current turn: {self.current_turn}\n")
+                f.write(f"Number of players: {len(self.players)}\n")
+                f.write(f"Map image exists: {self.map_image is not None}\n")
+                if hasattr(self, 'current_screen'):
+                    f.write(f"Current screen type: {type(self.current_screen).__name__}\n")
+            
+            error_msg = f"Error loading image: {str(e)}\nCheck {log_file} for full error details."
+            messagebox.showerror("Error Loading Image", error_msg)
 
 
     def save_current_map_state(self):
+        """Save the current map state including any units"""
         if self.map_image is None:
             return  # No map to save
-            
+                
         filename = f"{self.temp_dir}/map_turn_{self.current_turn}.png"
         
         # Create temporary image with units rendered
@@ -243,15 +300,19 @@ class MSPaintRiskEditor:
             # Generate the image
             self.current_screen.display_map_image()
             # Get and save the complete image with units
-            export_image = ImageTk.getimage(self.app.map_photo)
-            export_image.save(filename)
+            if hasattr(self, 'map_photo'):
+                export_image = ImageTk.getimage(self.map_photo)
+                export_image.save(filename)
+            else:
+                # If no PhotoImage exists, save the base map_image
+                self.map_image.save(filename)
             # Restore zoom
             self.current_screen.zoom_level = current_zoom
             self.current_screen.display_map_image()
         else:
             # Fallback if no display screen
             self.map_image.save(filename)
-            
+                
         # Create game state and save unit positions
         game_state = GameState(self.current_turn, filename)
         if self.roll_mode == 'tregonia':

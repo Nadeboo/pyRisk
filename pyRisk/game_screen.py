@@ -68,6 +68,14 @@ class GameScreen:
         # Separator
         ttk.Separator(self.mirror_container, orient='horizontal').pack(fill='x', pady=2)
         
+        # Research overview
+        tk.Label(self.mirror_container, text="Research", font=("Arial", 8, "bold")).pack(pady=(2,0))
+        self.research_mirror = tk.Frame(self.mirror_container)
+        self.research_mirror.pack(fill=tk.X)
+        
+        # Separator
+        ttk.Separator(self.mirror_container, orient='horizontal').pack(fill='x', pady=2)
+        
         # Alliances overview
         tk.Label(self.mirror_container, text="Alliances", font=("Arial", 8, "bold")).pack(pady=(2,0))
         self.alliances_mirror = tk.Frame(self.mirror_container)
@@ -86,6 +94,8 @@ class GameScreen:
         """Update the contents of mirror panels"""
         # Clear existing content
         for widget in self.players_mirror.winfo_children():
+            widget.destroy()
+        for widget in self.research_mirror.winfo_children():
             widget.destroy()
         for widget in self.alliances_mirror.winfo_children():
             widget.destroy()
@@ -106,11 +116,68 @@ class GameScreen:
             
             tk.Label(player_frame, text=player.name, font=("Arial", 7)).pack(side=tk.LEFT, padx=1)
             
-            # Compact resource display
-            resources = f"G:{player.gold}+{player.gold_per_turn}"
-            tk.Label(player_frame, text=resources, font=("Arial", 7)).pack(side=tk.RIGHT, padx=1)
+            # Create resources frame
+            resources_frame = tk.Frame(player_frame)
+            resources_frame.pack(side=tk.RIGHT, padx=1)
 
-        # Alliances and NAPs in minimal format
+            # Compact resource displays
+            resources = [
+                (f"G:{player.gold}+{player.gold_per_turn}", "Gold"),
+                (f"R:{player.research}+{player.research_per_turn}", "Research"),
+                (f"M:{player.mana}+{player.mana_per_turn}", "Mana"),
+                (f"I:{player.influence}+{player.influence_per_turn}", "Influence")
+            ]
+
+            for resource_text, tooltip in resources:
+                resource_label = tk.Label(resources_frame, text=resource_text, font=("Arial", 7))
+                resource_label.pack(side=tk.RIGHT, padx=2)
+                self.create_tooltip(resource_label, tooltip)
+
+        # Update research mirror
+        for player in self.app.players:
+            research_frame = tk.Frame(self.research_mirror, bg='white')
+            research_frame.pack(fill=tk.X, pady=1)
+            
+            # Player name with color indicator
+            name_frame = tk.Frame(research_frame, bg='white')
+            name_frame.pack(anchor=tk.W)
+            
+            color_box = tk.Frame(
+                name_frame,
+                bg='#{:02x}{:02x}{:02x}'.format(*player.color),
+                width=6,
+                height=6
+            )
+            color_box.pack(side=tk.LEFT, padx=1)
+            color_box.pack_propagate(False)
+            
+            tk.Label(
+                name_frame,
+                text=player.name,
+                font=("Arial", 7),
+                bg='white'
+            ).pack(side=tk.LEFT, padx=1)
+            
+            # Research list
+            completed = player.get_completed_research()
+            if completed:
+                research_text = ", ".join(r.display_name for r in sorted(
+                    completed, 
+                    key=lambda x: (x.tier.value, x.display_name)
+                ))
+            else:
+                research_text = "None"
+                
+            tk.Label(
+                research_frame,
+                text=research_text,
+                font=("Arial", 7),
+                bg='white',
+                wraplength=280,
+                justify=tk.LEFT
+            ).pack(anchor=tk.W, padx=10)
+
+        # Alliances in minimal format
         alliances = []
         for player in self.app.players:
             for ally in player.allies:
@@ -145,7 +212,7 @@ class GameScreen:
             for unit in self.app.units:
                 for sub_unit in unit.sub_units:
                     all_sub_units.add(sub_unit.unit_id)
-                    
+                        
             # Display only top-level armies
             for unit in self.app.units:
                 if unit.unit_id not in all_sub_units:
@@ -200,6 +267,30 @@ class GameScreen:
                 tk.Label(self.armies_mirror,
                         text="No armies",
                         font=("Arial", 7)).pack()
+
+    def create_tooltip(self, widget, text):
+        """Create a tooltip for a widget"""
+        def enter(event):
+            x, y, _, _ = widget.bbox("insert")
+            x += widget.winfo_rootx() + 25
+            y += widget.winfo_rooty() + 20
+            
+            # Create a toplevel window
+            self.tooltip = tk.Toplevel(widget)
+            self.tooltip.wm_overrideredirect(True)
+            self.tooltip.wm_geometry(f"+{x}+{y}")
+            
+            label = tk.Label(self.tooltip, text=text, justify=tk.LEFT,
+                        background="#ffffe0", relief=tk.SOLID, borderwidth=1,
+                        font=("Arial", "8", "normal"))
+            label.pack()
+
+        def leave(event):
+            if hasattr(self, 'tooltip'):
+                self.tooltip.destroy()
+                
+        widget.bind('<Enter>', enter)
+        widget.bind('<Leave>', leave)
 
     def setup_sidebar(self):
         # Turn information

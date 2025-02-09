@@ -133,7 +133,7 @@ class GameScreen:
                 resource_label.pack(side=tk.RIGHT, padx=2)
                 self.create_tooltip(resource_label, tooltip)
 
-        # Update research mirror
+        # Update research mirror with path separation
         for player in self.app.players:
             research_frame = tk.Frame(self.research_mirror, bg='white')
             research_frame.pack(fill=tk.X, pady=1)
@@ -158,24 +158,50 @@ class GameScreen:
                 bg='white'
             ).pack(side=tk.LEFT, padx=1)
             
-            # Research list
+            # Research list - now separated by path
             completed = player.get_completed_research()
-            if completed:
-                research_text = ", ".join(r.display_name for r in sorted(
-                    completed, 
-                    key=lambda x: (x.tier.value, x.display_name)
-                ))
-            else:
-                research_text = "None"
-                
-            tk.Label(
-                research_frame,
-                text=research_text,
-                font=("Arial", 7),
-                bg='white',
-                wraplength=280,
-                justify=tk.LEFT
-            ).pack(anchor=tk.W, padx=10)
+            
+            # Steel Path Research
+            steel_research = sorted(
+                [r for r in completed if r.path == 'steel'],
+                key=lambda x: (x.tier.value, x.display_name)
+            )
+            
+            if steel_research:
+                steel_text = "Steel: " + ", ".join(r.display_name for r in steel_research)
+                tk.Label(
+                    research_frame,
+                    text=steel_text,
+                    font=("Arial", 7),
+                    bg='white',
+                    wraplength=280,
+                    justify=tk.LEFT
+                ).pack(anchor=tk.W, padx=10)
+
+            # Magic Path Research
+            magic_research = sorted(
+                [r for r in completed if r.path == 'magic'],
+                key=lambda x: (x.tier.value, x.display_name)
+            )
+            
+            if magic_research:
+                magic_text = "Magic: " + ", ".join(r.display_name for r in magic_research)
+                tk.Label(
+                    research_frame,
+                    text=magic_text,
+                    font=("Arial", 7),
+                    bg='white',
+                    wraplength=280,
+                    justify=tk.LEFT
+                ).pack(anchor=tk.W, padx=10)
+
+            if not (steel_research or magic_research):
+                tk.Label(
+                    research_frame,
+                    text="No research",
+                    font=("Arial", 7),
+                    bg='white'
+                ).pack(anchor=tk.W, padx=10)
 
         # Alliances in minimal format
         alliances = []

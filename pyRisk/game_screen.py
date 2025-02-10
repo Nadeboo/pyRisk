@@ -8,6 +8,7 @@ from utils import flood_fill
 from players_screen import PlayersScreen
 from utils import check_territory_in_radius
 from game_screen_overlay import GameScreenOverlay  # Add this line
+from sprite_manager import SpriteManager
 class GameScreen:
     def __init__(self, parent, app):
         self.parent = parent
@@ -15,17 +16,22 @@ class GameScreen:
         self.frame = tk.Frame(parent)
         self.frame.pack(fill=tk.BOTH, expand=True)
         
-        # Initialize state variables first
+        # Initialize state variables
         self.selected_unit = None
         self.unit_mode = False
-        self.zoom_level = 1.0
         self.resource_paint_mode = None
         self.RESOURCE_COLORS = {
             'unactivated': (0, 255, 0),
             'gold': (255, 255, 0),
             'mana': (0, 255, 255)
         }
-        self.player_buttons = []  # Initialize this before setup_sidebar uses it
+        self.player_buttons = []
+        self.dragged_item = None
+        self.map_photo = None
+        self.map_item = None
+
+        # Initialize sprite manager with app reference
+        self.sprite_manager = SpriteManager(app)
 
         # Initialize overlay drawer
         self.overlay_drawer = GameScreenOverlay()
@@ -34,29 +40,50 @@ class GameScreen:
         self.main_container = tk.Frame(self.frame)
         self.main_container.pack(fill=tk.BOTH, expand=True)
 
-        # Create all container frames first
+        # Create container frames
         self.sidebar = tk.Frame(self.main_container, width=150, bg='lightgrey')
         self.map_container = tk.Frame(self.main_container)
 
-        # Then pack them in order
+        # Pack frames
         self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
         self.sidebar.pack_propagate(False)
         self.map_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # Now setup the components
+        # Setup components
         self.setup_canvas()
         self.setup_sidebar()
 
-        # Final initialization steps
+        # Initialize zoom parameters with optimized defaults
+        self.zoom_level = 1.0
+        self.min_zoom = 0.1
+        self.max_zoom = 5.0
+        self.zoom_update_id = None
+
+        # Optimized canvas configuration
+        self.canvas.configure(
+            scrollregion=(0, 0, 1, 1),  # Will be updated when image is loaded
+            insertwidth=0,              # Remove cursor indicator
+            highlightthickness=0        # Remove highlight border
+        )
+
+        # Buffer for storing rendered tiles
+        self.tile_cache = {}
+        self.tile_size = 256  # Standard tile size for efficient rendering
+
+        # Performance optimizations
+        self.canvas.configure(
+            xscrollincrement=1,    # Smooth scrolling
+            yscrollincrement=1,
+            takefocus=True         # Enable keyboard focus for better event handling
+        )
+
+        # Display map if exists
         if self.app.map_image:
             self.display_map_image()
+            
+        # Bind events
         self.bind_events()
-        self.resource_paint_mode = None
-        self.RESOURCE_COLORS = {
-            'unactivated': (0, 255, 0),
-            'gold': (255, 255, 0),
-            'mana': (0, 255, 255)
-        }
+        
 
     def create_tooltip(self, widget, text):
         """Create a tooltip for a widget"""
@@ -146,19 +173,37 @@ class GameScreen:
                 btn.config(relief=tk.RAISED)
 
     def setup_canvas(self):
+        """Setup canvas with sliders and zoom controls"""
+        # Create main canvas frame
         self.canvas_frame = tk.Frame(self.map_container)
         self.canvas_frame.pack(fill=tk.BOTH, expand=True)
         
+        # Create a frame for zoom controls
+        zoom_frame = tk.Frame(self.canvas_frame)
+        zoom_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+        
+        # Add zoom buttons
+        self.zoom_out_btn = tk.Button(zoom_frame, text="-", command=self.zoom_out)
+        self.zoom_out_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.zoom_in_btn = tk.Button(zoom_frame, text="+", command=self.zoom_in)
+        self.zoom_in_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Create zoom level label
+        self.zoom_label = tk.Label(zoom_frame, text="100%")
+        self.zoom_label.pack(side=tk.LEFT, padx=5)
+        
+        # Create canvas and scrollbars
         self.canvas = tk.Canvas(self.canvas_frame, bg='grey')
+        self.h_scrollbar = tk.Scale(self.canvas_frame, orient=tk.HORIZONTAL, 
+                                from_=0, to=100, command=self.on_h_scroll)
+        self.v_scrollbar = tk.Scale(self.canvas_frame, orient=tk.VERTICAL, 
+                                from_=0, to=100, command=self.on_v_scroll)
+        
+        # Pack canvas and scrollbars
+        self.v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        h_scrollbar = tk.Scrollbar(self.canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-        
-        v_scrollbar = tk.Scrollbar(self.canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
-        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        self.canvas.configure(xscrollcommand=h_scrollbar.set, yscrollcommand=v_scrollbar.set)
     def toggle_unit_mode(self):
         """Toggle between unit movement mode and regular map editing mode"""
         self.unit_mode = not self.unit_mode
@@ -172,63 +217,172 @@ class GameScreen:
             self.canvas.config(cursor="")
             self.selected_unit = None
 
+    def get_visible_region(self):
+        """Get the currently visible region of the map"""
+        if not self.app.map_image:
+            return None
+            
+        # Get canvas dimensions
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Get scroll position
+        x_view = self.canvas.xview()
+        y_view = self.canvas.yview()
+        
+        # Calculate visible coordinates based on scroll position and zoom
+        x1 = int(x_view[0] * self.app.map_image.width * self.zoom_level)
+        y1 = int(y_view[0] * self.app.map_image.height * self.zoom_level)
+        x2 = int(x_view[1] * self.app.map_image.width * self.zoom_level)
+        y2 = int(y_view[1] * self.app.map_image.height * self.zoom_level)
+        
+        return (x1, y1, x2, y2)
+    
+    def get_required_tiles(self, visible_region):
+        """Calculate which tiles are needed for the current view"""
+        if not visible_region or not self.app.map_image:
+            return set()
+            
+        x1, y1, x2, y2 = visible_region
+        
+        # Convert to tile coordinates with proper rounding
+        start_tile_x = max(0, int(x1 / (self.tile_size * self.zoom_level)))
+        start_tile_y = max(0, int(y1 / (self.tile_size * self.zoom_level)))
+        end_tile_x = min(
+            self.app.map_image.width // self.tile_size,
+            int(x2 / (self.tile_size * self.zoom_level)) + 1
+        )
+        end_tile_y = min(
+            self.app.map_image.height // self.tile_size,
+            int(y2 / (self.tile_size * self.zoom_level)) + 1
+        )
+        
+        return {(x, y) for x in range(start_tile_x, end_tile_x + 1)
+                    for y in range(start_tile_y, end_tile_y + 1)}
+    
+    def render_tile(self, tile_x, tile_y):
+        """Render a single map tile"""
+        if not self.app.map_image:
+            return None
+            
+        # Calculate tile boundaries
+        x1 = tile_x * self.tile_size
+        y1 = tile_y * self.tile_size
+        x2 = min(x1 + self.tile_size, self.app.map_image.width)
+        y2 = min(y1 + self.tile_size, self.app.map_image.height)
+        
+        # Create tile image
+        tile = Image.new('RGBA', (self.tile_size, self.tile_size), (0, 0, 0, 0))
+        
+        # Copy base map portion
+        map_region = self.app.map_image.crop((x1, y1, x2, y2))
+        tile.paste(map_region, (0, 0))
+        
+        # Draw owned territories
+        draw = ImageDraw.Draw(tile)
+        for (x, y), owner in self.app.tile_owners.items():
+            if (x1 <= x < x2) and (y1 <= y < y2):
+                if owner:
+                    player = next((p for p in self.app.players if p.name == owner), None)
+                    if player:
+                        draw.point((x - x1, y - y1), fill=player.color)
+        
+        # Draw sprites
+        for pos, sprite_info in self.sprite_manager.placed_sprites.items():
+            sprite_x, sprite_y = pos
+            if (x1 <= sprite_x < x2) and (y1 <= sprite_y < y2):
+                sprite_image = self.sprite_manager.sprites.get(sprite_info.sprite_type)
+                if sprite_image:
+                    paste_x = sprite_x - x1 - sprite_image.width // 2
+                    paste_y = sprite_y - y1 - sprite_image.height // 2
+                    tile.paste(sprite_image, (paste_x, paste_y), sprite_image)
+        
+        return tile
+
     def on_canvas_right_click(self, event):
         """Handle right-click on canvas"""
-        if not self.app.roll_mode == 'tregonia':
+        if not self.app.map_image:
             return
-            
-        # Convert canvas coordinates to map coordinates
-        x = int(self.canvas.canvasx(event.x) / self.zoom_level)
-        y = int(self.canvas.canvasy(event.y) / self.zoom_level)
+
+        # Convert canvas coordinates to original image coordinates
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
         
-        # Check if we clicked on any unit
-        clicked_unit = None
-        for unit in self.app.units:
-            if unit.position:
-                unit_x, unit_y = unit.position
-                # Define a click radius
-                if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
-                    clicked_unit = unit
-                    break
+        # Calculate image coordinates without relying on bbox
+        x = int(canvas_x / self.zoom_level)
+        y = int(canvas_y / self.zoom_level)
         
-        if clicked_unit:
-            # Create popup menu
-            popup = tk.Menu(self.canvas, tearoff=0)
+        # Check if click is within image bounds
+        if (x < 0 or y < 0 or 
+            x >= self.app.map_image.width or 
+            y >= self.app.map_image.height):
+            return
+
+        # Check for unit at this location first (if in Tregonia mode)
+        if self.app.roll_mode == 'tregonia':
+            clicked_unit = None
+            for unit in self.app.units:
+                if unit.position:
+                    unit_x, unit_y = unit.position
+                    # Define a click radius
+                    if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
+                        clicked_unit = unit
+                        break
             
-            # Add "Remove from Map" option at the top
+            if clicked_unit:
+                self.show_unit_popup(event, clicked_unit)
+                return
+
+        # Check for existing sprite at this location with radius check
+        existing_sprite, sprite_pos = self.get_sprite_at_position(x, y)
+        
+        # Create popup menu
+        popup = tk.Menu(self.canvas, tearoff=0)
+        
+        if existing_sprite:
+            # Options for existing sprite
             popup.add_command(
-                label="Remove from Map",
-                command=lambda: self.remove_unit_from_map(clicked_unit)
+                label=f"Remove {existing_sprite.sprite_type}",
+                command=lambda: self.remove_sprite(sprite_pos)
             )
-            popup.add_separator()
-            
-            if clicked_unit.is_army:
-                # Create submenu for removing individual units
-                units_menu = tk.Menu(popup, tearoff=0)
-                if clicked_unit.sub_units:
-                    for unit in clicked_unit.sub_units:
-                        units_menu.add_command(
-                            label=f"Remove {unit.unit_type.value} #{unit.unit_id}",
-                            command=lambda u=unit: self.remove_unit_from_army(clicked_unit, u)
-                        )
-                else:
-                    units_menu.add_command(label="No units in army", state=tk.DISABLED)
-                
-                popup.add_cascade(label="Remove Unit", menu=units_menu)
-                popup.add_separator()
+        else:
+            # Add sprite placement options
+            if self.app.selected_player:
                 popup.add_command(
-                    label="Delete Entire Army",
-                    command=lambda: self.delete_unit(clicked_unit)
+                    label="Place City",
+                    command=lambda: self.add_sprite('city', x, y)
                 )
             else:
-                # Single unit deletion
                 popup.add_command(
-                    label="Delete Unit",
-                    command=lambda: self.delete_unit(clicked_unit)
+                    label="Place City (Select a player first)",
+                    state=tk.DISABLED
                 )
+        
+        popup.tk_popup(event.x_root, event.y_root)
+
+
+    def add_sprite(self, sprite_type, x, y):
+        """Add a sprite to the map"""
+        if self.app.selected_player:
+            owner = self.app.selected_player.name
+        else:
+            return
             
-            # Display the popup menu at mouse position
-            popup.tk_popup(event.x_root, event.y_root)
+        if self.sprite_manager.add_sprite(sprite_type, (x, y), owner):
+            self.display_map_image()
+
+    def remove_sprite(self, position):
+        """Remove a sprite from the map"""
+        if self.sprite_manager.remove_sprite(position):
+            self.display_map_image()
+
+    def get_sprite_at_position(self, click_x, click_y, radius=10):
+            """Find a sprite near the clicked position within a radius"""
+            for pos, sprite_info in self.sprite_manager.placed_sprites.items():
+                sprite_x, sprite_y = pos
+                if abs(sprite_x - click_x) <= radius and abs(sprite_y - click_y) <= radius:
+                    return sprite_info, pos
+            return None, None
 
     def update_resource_ownership(self):
         """Update ownership of all resources based on surrounding territory"""
@@ -313,84 +467,124 @@ class GameScreen:
         if hasattr(self.app.current_screen, 'update_army_list'):
             self.app.current_screen.update_army_list()
 
+    def get_viewport_bounds(self):
+        """Get the current viewport bounds in original image coordinates"""
+        if not self.app.map_image:
+            return None
+
+        # Get canvas dimensions and scroll position
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        x_view = self.canvas.xview()
+        y_view = self.canvas.yview()
+
+        # Calculate visible coordinates
+        x1 = int(x_view[0] * self.app.map_image.width * self.zoom_level)
+        y1 = int(y_view[0] * self.app.map_image.height * self.zoom_level)
+        x2 = int(x_view[1] * self.app.map_image.width * self.zoom_level)
+        y2 = int(y_view[1] * self.app.map_image.height * self.zoom_level)
+
+        # Convert to original image coordinates
+        x1 = max(0, int(x1 / self.zoom_level))
+        y1 = max(0, int(y1 / self.zoom_level))
+        x2 = min(self.app.map_image.width, int(x2 / self.zoom_level))
+        y2 = min(self.app.map_image.height, int(y2 / self.zoom_level))
+
+        return (x1, y1, x2, y2)
+
+    def get_visible_sprite_bounds(self, sprite_position, sprite_image):
+        """Check if a sprite is visible in the current viewport"""
+        if not self.app.map_image:
+            return None
+
+        viewport = self.get_viewport_bounds()
+        if not viewport:
+            return None
+
+        x, y = sprite_position
+        sprite_width = sprite_image.width
+        sprite_height = sprite_image.height
+
+        # Calculate sprite bounds
+        sprite_x1 = x - sprite_width // 2
+        sprite_y1 = y - sprite_height // 2
+        sprite_x2 = sprite_x1 + sprite_width
+        sprite_y2 = sprite_y1 + sprite_height
+
+        # Check if sprite intersects viewport
+        if (sprite_x2 < viewport[0] or sprite_x1 > viewport[2] or
+            sprite_y2 < viewport[1] or sprite_y1 > viewport[3]):
+            return None
+
+        return (sprite_x1, sprite_y1, sprite_x2, sprite_y2)
+
     def display_map_image(self):
+        """Display the map image with current zoom level"""
         if self.app.map_image is None:
             return
 
-        # Create display image at original size
+        # Create working copy of the map
         display_image = self.app.map_image.copy()
-        draw = ImageDraw.Draw(display_image)
         
-        # Draw owned tiles
-        for (x, y), owner in self.app.tile_owners.items():
-            if owner:
-                player = next((p for p in self.app.players if p.name == owner), None)
-                if player:
-                    draw.point((x, y), fill=player.color)
-
-        # Draw overlay with player info
-        display_image = self.overlay_drawer.draw_overlay(
-            display_image, 
-            self.app.players,
-            self.app.current_turn
-        )
-
-        # Apply zoom
+        # Apply zoom if needed
         if self.zoom_level != 1.0:
             new_size = (
-                int(display_image.width * self.zoom_level),
-                int(display_image.height * self.zoom_level)
+                int(round(display_image.width * self.zoom_level)),
+                int(round(display_image.height * self.zoom_level))
             )
-            display_image = display_image.resize(new_size, Image.Resampling.NEAREST)
+            resampling = Image.Resampling.LANCZOS if self.zoom_level > 1.0 else Image.Resampling.BILINEAR
+            display_image = display_image.resize(new_size, resampling)
 
-        # Render units if in Tregonia mode
-        if self.app.roll_mode == 'tregonia':
-            unit_overlay = Image.new('RGBA', display_image.size, (0, 0, 0, 0))
-            draw = ImageDraw.Draw(unit_overlay)
-            
-            # Create font scaled to zoom level
-            try:
-                unit_font = ImageFont.truetype("arial.ttf", int(16 * self.zoom_level))
-            except IOError:
-                unit_font = ImageFont.load_default()
-
-            for unit in self.app.units:
-                if unit.position:
-                    x, y = [int(coord * self.zoom_level) for coord in unit.position]
-                    owner = next((p for p in self.app.players if p.name == unit.owner), None)
-                    owner_color = owner.color if owner else (128, 128, 128)
-                    
-                    draw.rectangle([x - 3, y - 3, x + 23, y + 23], fill='black')
-                    draw.rectangle([x - 2, y - 2, x + 22, y + 22], fill='white')
-                    draw.text((x + 1, y + 1), str(unit.unit_id), font=unit_font, fill='black')
-                    draw.rectangle([x - 3, y + 24, x + 23, y + 28], fill='black')
-                    draw.rectangle([x - 2, y + 25, x + 22, y + 27], fill=owner_color + (255,))
-
-            display_image = Image.alpha_composite(display_image, unit_overlay)
-
-        # Update PhotoImage
-        self.app.map_photo = ImageTk.PhotoImage(display_image)
+        # Update the display
+        self.map_photo = ImageTk.PhotoImage(display_image)
+        
+        # Clear canvas and create new image
         self.canvas.delete("all")
+        self.map_item = self.canvas.create_image(0, 0, image=self.map_photo, anchor=tk.NW)
+
+        # Update scroll region
+        self.canvas.config(scrollregion=(0, 0, display_image.width, display_image.height))
+
+
+    def draw_units(self):
+        """Draw units separately to avoid including them in tile cache"""
+        visible_region = self.get_visible_region()
+        if not visible_region:
+            return
+            
+        x1, y1, x2, y2 = visible_region
         
-        # Center image in canvas
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-        image_width = display_image.width
-        image_height = display_image.height
-        
-        x = max(0, (canvas_width - image_width) // 2)
-        y = max(0, (canvas_height - image_height) // 2)
-        
-        self.map_item = self.canvas.create_image(x, y, image=self.app.map_photo, anchor=tk.NW)
-        
-        # Set scroll region with padding
-        padding = 100
-        self.canvas.config(scrollregion=(
-            -padding,
-            -padding,
-            image_width + padding,
-            image_height + padding
-        ))
+        try:
+            unit_font = ImageFont.truetype("arial.ttf", int(16 * self.zoom_level))
+        except IOError:
+            unit_font = ImageFont.load_default()
+
+        for unit in self.app.units:
+            if unit.position:
+                x, y = [int(coord * self.zoom_level) for coord in unit.position]
+                
+                # Skip if unit is not in visible region
+                if not (x1 <= x <= x2 and y1 <= y <= y2):
+                    continue
+                    
+                owner = next((p for p in self.app.players if p.name == unit.owner), None)
+                owner_color = owner.color if owner else (128, 128, 128)
+                
+                # Draw unit directly on canvas
+                self.canvas.create_rectangle(
+                    x - 3, y - 3, x + 23, y + 23,
+                    fill='white', outline='black'
+                )
+                self.canvas.create_text(
+                    x + 10, y + 10,
+                    text=str(unit.unit_id),
+                    font=unit_font
+                )
+                self.canvas.create_rectangle(
+                    x - 3, y + 24, x + 23, y + 28,
+                    fill='#{:02x}{:02x}{:02x}'.format(*owner_color),
+                    outline='black'
+                )
 
     def update_player_buttons(self):
         for widget in self.sidebar.winfo_children():
@@ -436,61 +630,63 @@ class GameScreen:
                 btn.config(relief=tk.RAISED)
 
     def bind_events(self):
+        """Bind required events"""
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<Button-3>", self.on_canvas_right_click)  # Right click
-        self.canvas.bind("<MouseWheel>", self.on_mousewheel)  # Windows
-        self.canvas.bind("<Button-4>", self.on_mousewheel)    # Linux scroll up
-        self.canvas.bind("<Button-5>", self.on_mousewheel)    # Linux scroll down
 
-    def on_mousewheel(self, event):
-        if hasattr(self, '_zoom_after'):
-            self.canvas.after_cancel(self._zoom_after)
-        
-        # Get mouse position relative to canvas
-        mouse_x = self.canvas.canvasx(event.x)
-        mouse_y = self.canvas.canvasy(event.y)
-        
-        # Get current image position
-        bbox = self.canvas.bbox(self.map_item)
-        if not bbox:
+    def on_h_scroll(self, value):
+        """Handle horizontal scroll events"""
+        if not self.app.map_image or not hasattr(self, 'map_item'):
             return
             
-        # Calculate relative position within the image
-        image_x, image_y = bbox[0], bbox[1]
-        rel_x = (mouse_x - image_x) / (bbox[2] - bbox[0])
-        rel_y = (mouse_y - image_y) / (bbox[3] - bbox[1])
-        
-        # Update zoom level with finer control
+        # Convert percentage to actual position
+        value = float(value) / 100
+        self.canvas.xview_moveto(value)
+
+    def on_v_scroll(self, value):
+        """Handle vertical scroll events"""
+        if not self.app.map_image or not hasattr(self, 'map_item'):
+            return
+            
+        # Convert percentage to actual position
+        value = float(value) / 100
+        self.canvas.yview_moveto(value)
+
+    def zoom_in(self):
+        """Handle zoom in button click"""
+        if not self.app.map_image:
+            return
+            
         old_zoom = self.zoom_level
-        if event.num == 5 or event.delta < 0:  # Zoom out
-            self.zoom_level = max(0.1, self.zoom_level - 0.1)
-        elif event.num == 4 or event.delta > 0:  # Zoom in
-            self.zoom_level = min(5.0, self.zoom_level + 0.1)
+        self.zoom_level = min(self.max_zoom, self.zoom_level * 1.2)
         
-        # Schedule the update
-        self._zoom_after = self.canvas.after(50, lambda: self._update_zoom(rel_x, rel_y))
+        if old_zoom != self.zoom_level:
+            # Update zoom label
+            zoom_percent = int(self.zoom_level * 100)
+            self.zoom_label.config(text=f"{zoom_percent}%")
+            
+            # Update display
+            self.display_map_image()
 
-    def _update_zoom(self, rel_x, rel_y):
-        # Update display
-        self.display_map_image()
-        
-        # Get new image bbox
-        bbox = self.canvas.bbox(self.map_item)
-        if not bbox:
+    def zoom_out(self):
+        """Handle zoom out button click"""
+        if not self.app.map_image:
             return
             
-        # Calculate new scroll position
-        new_x = bbox[0] + (bbox[2] - bbox[0]) * rel_x
-        new_y = bbox[1] + (bbox[3] - bbox[1]) * rel_y
+        old_zoom = self.zoom_level
+        self.zoom_level = max(self.min_zoom, self.zoom_level / 1.2)
         
-        # Adjust scroll position
-        self.canvas.xview_moveto((new_x - self.canvas.winfo_width()/2) / self.canvas.bbox(tk.ALL)[2])
-        self.canvas.yview_moveto((new_y - self.canvas.winfo_height()/2) / self.canvas.bbox(tk.ALL)[3])
+        if old_zoom != self.zoom_level:
+            # Update zoom label
+            zoom_percent = int(self.zoom_level * 100)
+            self.zoom_label.config(text=f"{zoom_percent}%")
+            
+            # Update display
+            self.display_map_image()
 
     def invalidate_display_cache(self):
-        """Clear the cached display image to force a redraw"""
-        if hasattr(self, 'current_display_image'):
-            del self.current_display_image
+        """Force a redraw of the display"""
+        self.display_map_image()
 
     def on_canvas_click(self, event):
         if self.app.map_image is None:
@@ -500,18 +696,9 @@ class GameScreen:
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
         
-        # Get the actual image position on the canvas
-        bbox = self.canvas.bbox(self.map_item)
-        if not bbox:
-            return
-            
-        # Calculate offset from image origin
-        image_x = canvas_x - bbox[0]
-        image_y = canvas_y - bbox[1]
-        
-        # Convert to original image coordinates
-        x = int(image_x / self.zoom_level)
-        y = int(image_y / self.zoom_level)
+        # Calculate image coordinates without relying on bbox
+        x = int(canvas_x / self.zoom_level)
+        y = int(canvas_y / self.zoom_level)
 
         # Handle unit movement if in unit mode
         if self.app.roll_mode == 'tregonia' and self.unit_mode:

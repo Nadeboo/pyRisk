@@ -1,7 +1,7 @@
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, colorchooser
-from PIL import Image, ImageTk, ImageDraw
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 import os
 import json
 
@@ -37,30 +37,31 @@ class MSPaintRiskEditor:
         self.RESOURCE_COLOR = (255, 255, 0)  # RGB for #45AD22
 
     def initialize_variables(self):
-        self.game_name = "Untitled Game"
-        self.current_turn = 0
-        self.players = []
-        self.game_states = []
-        self.roll_table = RollTable()
-        self.all_roll_results = []
-        self.map_image = None
-        self.map_photo = None
-        self.map_draw = None
-        self.original_map_image = None
-        self.map_history = []
-        self.max_history = 10
-        self.temp_dir = "temp_maps"
-        self.current_screen = None
-        self.player_rolls = {}
-        self.roll_results = []
-        self.mode = 'color'
-        self.selected_player = None
-        self.units = []  # Initialize empty units list
-        self.next_unit_id = 1  # Start unit IDs at 1
-        
-        # Initialize Tregonia-specific variables here if needed
-        if not os.path.exists(self.temp_dir):
-            os.makedirs(self.temp_dir)
+            self.game_name = "Untitled Game"
+            self.current_turn = 0
+            self.players = []
+            self.game_states = []
+            self.roll_table = RollTable()
+            self.all_roll_results = []
+            self.map_image = None
+            self.map_photo = None
+            self.map_draw = None
+            self.original_map_image = None
+            self.map_history = []
+            self.max_history = 10
+            self.temp_dir = "temp_maps"
+            self.current_screen = None
+            self.player_rolls = {}
+            self.roll_results = []
+            self.mode = 'color'
+            self.selected_player = None
+            self.units = []  # Initialize empty units list
+            self.next_unit_id = 1  # Start unit IDs at 1
+            self.placed_sprites = {}  # Store sprite data
+            
+            # Initialize Tregonia-specific variables here if needed
+            if not os.path.exists(self.temp_dir):
+                os.makedirs(self.temp_dir)
             
     def setup_menu(self):
         self.menu_bar = tk.Menu(self.master)
@@ -290,28 +291,45 @@ class MSPaintRiskEditor:
                 
         filename = f"{self.temp_dir}/map_turn_{self.current_turn}.png"
         
-        # Create temporary image with units rendered
-        if self.current_screen and hasattr(self.current_screen, 'display_map_image'):
-            # Store current zoom
-            current_zoom = self.current_screen.zoom_level
-            # Set zoom to 1.0 for saving
-            self.current_screen.zoom_level = 1.0
-            self.current_screen.invalidate_display_cache()
-            # Generate the image
-            self.current_screen.display_map_image()
-            # Get and save the complete image with units
-            if hasattr(self, 'map_photo'):
-                export_image = ImageTk.getimage(self.map_photo)
-                export_image.save(filename)
-            else:
-                # If no PhotoImage exists, save the base map_image
-                self.map_image.save(filename)
-            # Restore zoom
-            self.current_screen.zoom_level = current_zoom
-            self.current_screen.display_map_image()
-        else:
-            # Fallback if no display screen
-            self.map_image.save(filename)
+        # Create a copy of the base map to save
+        save_image = self.map_image.copy()
+        draw = ImageDraw.Draw(save_image)
+        
+        # If in Tregonia mode and there are units, draw them onto the save image
+        if self.roll_mode == 'tregonia' and hasattr(self, 'units'):
+            try:
+                unit_font = ImageFont.truetype("arial.ttf", 16)
+            except IOError:
+                unit_font = ImageFont.load_default()
+                
+            for unit in self.units:
+                if unit.position:
+                    x, y = unit.position
+                    owner = next((p for p in self.players if p.name == unit.owner), None)
+                    owner_color = owner.color if owner else (128, 128, 128)
+                    
+                    # Draw unit rectangle
+                    draw.rectangle(
+                        [x - 3, y - 3, x + 23, y + 23],
+                        fill='white', outline='black'
+                    )
+                    # Draw unit ID
+                    draw.text(
+                        (x + 10, y + 10),
+                        str(unit.unit_id),
+                        font=unit_font,
+                        fill='black',
+                        anchor='mm'
+                    )
+                    # Draw owner color bar
+                    draw.rectangle(
+                        [x - 3, y + 24, x + 23, y + 28],
+                        fill=owner_color,
+                        outline='black'
+                    )
+        
+        # Save the image with units drawn on it
+        save_image.save(filename)
                 
         # Create game state and save unit positions
         game_state = GameState(self.current_turn, filename)

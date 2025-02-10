@@ -12,6 +12,21 @@ class SpriteInfo:
     position: Tuple[int, int]
     owner: Optional[str] = None
     extra_data: Dict = None
+    name: Optional[str] = None
+
+    def __post_init__(self):
+        if self.extra_data is None:
+            self.extra_data = {}
+            
+    @property
+    def slots(self):
+        """Get city slots for compatibility with overlay"""
+        return self.extra_data.get('slots', [])
+
+    @property
+    def improvements(self):
+        """Get city improvements for compatibility with overlay"""
+        return self.extra_data.get('improvements', [])
 
     def __post_init__(self):
         if self.extra_data is None:

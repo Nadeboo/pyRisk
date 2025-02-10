@@ -101,19 +101,20 @@ class GameScreenOverlay:
             y = self._draw_section_background(draw, x, y, city_height)
             
             # Draw city name and owner
+            city_name = city.name if city.name else "Unnamed City"
             draw.text(
                 (x + 10, y - self.SECTION_PADDING),
-                f"{city.name} ({city.owner})",
+                f"{city_name} ({city.owner})",
                 font=self.font_bold,
                 fill=self.TEXT_COLOR
             )
             y += 20
 
             # Draw improvements in a grid-like format
-            improvements = sorted(city.slots)
-            for i in range(0, len(improvements), 3):
-                row_improvements = improvements[i:i+3]
-                row_text = "  ".join(row_improvements)
+            slots = city.slots if city.slots else []
+            for i in range(0, len(slots), 3):
+                row_slots = slots[i:i+3]
+                row_text = "  ".join(row_slots)
                 draw.text(
                     (x + 20, y - self.SECTION_PADDING),
                     row_text,

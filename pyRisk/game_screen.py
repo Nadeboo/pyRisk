@@ -519,12 +519,79 @@ class GameScreen:
         return (sprite_x1, sprite_y1, sprite_x2, sprite_y2)
 
     def display_map_image(self):
-        """Display the map image with current zoom level"""
+        """Display the map image with current zoom level and overlay"""
         if self.app.map_image is None:
             return
 
         # Create working copy of the map
         display_image = self.app.map_image.copy()
+        
+        # Draw territory
+        draw = ImageDraw.Draw(display_image)
+        for (x, y), owner in self.app.tile_owners.items():
+            if owner:
+                player = next((p for p in self.app.players if p.name == owner), None)
+                if player:
+                    draw.point((x, y), fill=player.color)
+        
+        # Draw sprites (including cities)
+        for pos, sprite_info in self.sprite_manager.placed_sprites.items():
+            sprite_x, sprite_y = pos
+            sprite_image = self.sprite_manager.sprites.get(sprite_info.sprite_type)
+            if sprite_image:
+                # Create a copy of the sprite to color if needed
+                sprite_to_draw = sprite_image.copy()
+                if sprite_info.extra_data and 'color' in sprite_info.extra_data:
+                    # Create a solid color overlay
+                    overlay = Image.new('RGBA', sprite_image.size, (*sprite_info.extra_data['color'], 128))
+                    # Composite the overlay onto the sprite
+                    sprite_to_draw = Image.alpha_composite(sprite_to_draw.convert('RGBA'), overlay)
+                
+                paste_x = sprite_x - sprite_image.width // 2
+                paste_y = sprite_y - sprite_image.height // 2
+                display_image.paste(sprite_to_draw, (paste_x, paste_y), sprite_to_draw)
+        
+        # Draw units if in Tregonia mode
+        if self.app.roll_mode == 'tregonia':
+            try:
+                unit_font = ImageFont.truetype("arial.ttf", int(16))
+            except IOError:
+                unit_font = ImageFont.load_default()
+                
+            for unit in self.app.units:
+                if unit.position:
+                    x, y = unit.position
+                    owner = next((p for p in self.app.players if p.name == unit.owner), None)
+                    owner_color = owner.color if owner else (128, 128, 128)
+                    
+                    draw.rectangle(
+                        [x - 3, y - 3, x + 23, y + 23],
+                        fill='white', outline='black'
+                    )
+                    draw.text(
+                        (x + 10, y + 10),
+                        str(unit.unit_id),
+                        font=unit_font,
+                        fill='black',
+                        anchor='mm'
+                    )
+                    draw.rectangle(
+                        [x - 3, y + 24, x + 23, y + 28],
+                        fill=owner_color,
+                        outline='black'
+                    )
+        
+        # Get cities for the overlay
+        cities = [sprite_info for sprite_info in self.sprite_manager.placed_sprites.values() 
+                if sprite_info.sprite_type == 'city']
+        
+        # Add the overlay before zooming
+        display_image = self.overlay_drawer.draw_overlay(
+            display_image,
+            self.app.players,
+            self.app.current_turn,
+            cities
+        )
         
         # Apply zoom if needed
         if self.zoom_level != 1.0:
@@ -723,33 +790,44 @@ class GameScreen:
         if len(self.app.map_history) > self.app.max_history:
             self.app.map_history.pop(0)
 
-        # Get current pixel color
+        # First check if we clicked on a city sprite
+        clicked_sprite, sprite_pos = self.get_sprite_at_position(x, y)
+        if clicked_sprite and clicked_sprite.sprite_type == 'city':
+            if self.app.selected_player:
+                # Color the city sprite
+                clicked_sprite.extra_data['color'] = self.app.selected_player.color
+                clicked_sprite.owner = self.app.selected_player.name
+                self.display_map_image()
+                return
+            else:
+                messagebox.showwarning("No Player Selected", "Please select a player before coloring.")
+                return
+
+        # Get current pixel color for territory painting
         target_color = self.app.map_image.getpixel((x, y))
         if len(target_color) == 4:
             target_color = target_color[:3]
 
         if self.resource_paint_mode:
-            print(f"Resource paint mode active: {self.resource_paint_mode}")  # Debug
+            print(f"Resource paint mode active: {self.resource_paint_mode}")
             replacement_color = self.RESOURCE_COLORS[self.resource_paint_mode]
-            print(f"Painting with color: {replacement_color}")  # Debug
+            print(f"Painting with color: {replacement_color}")
             
             region = flood_fill(self.app.map_image, x, y, target_color, replacement_color)
             if region:
-                print(f"Found region with center: {region['center']}")  # Debug
+                print(f"Found region with center: {region['center']}")
                 center = region['center']
                 self.app.resource_tiles[center] = {
                     'type': self.resource_paint_mode,
                     'owner': None
                 }
-                print(f"Added resource tile at {center}: {self.app.resource_tiles[center]}")  # Debug
+                print(f"Added resource tile at {center}: {self.app.resource_tiles[center]}")
                 
-                # Update ownership immediately for the new resource
                 if self.app.roll_mode == 'tregonia':
                     self.update_resource_ownership()
                     
             self.display_map_image()
             
-            # Update any relevant displays
             if hasattr(self.app.current_screen, 'update_player_list'):
                 self.app.current_screen.update_player_list()
             return

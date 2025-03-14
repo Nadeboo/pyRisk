@@ -28,10 +28,6 @@ class SpriteInfo:
         """Get city improvements for compatibility with overlay"""
         return self.extra_data.get('improvements', [])
 
-    def __post_init__(self):
-        if self.extra_data is None:
-            self.extra_data = {}
-
 class SpriteManager:
     def __init__(self, app, sprite_folder="sprites"):
         self.app = app
@@ -97,3 +93,30 @@ class SpriteManager:
     def placed_sprites(self):
         """Access the app's placed sprites"""
         return self.app.placed_sprites
+
+    def get_sprite_at_position(self, click_x: int, click_y: int, radius: int = 10) -> Optional[Tuple[Tuple[int, int], SpriteInfo]]:
+        """Find a sprite near the clicked position within a given radius"""
+        for pos, sprite_info in self.placed_sprites.items():
+            sprite_x, sprite_y = pos
+            if abs(sprite_x - click_x) <= radius and abs(sprite_y - click_y) <= radius:
+                return pos, sprite_info
+        return None
+
+    def get_visible_sprite_bounds(self, sprite_position: Tuple[int, int], sprite_image: Image.Image) -> Tuple[int, int, int, int]:
+        """Calculate the visible bounds of a sprite"""
+        sprite_x, sprite_y = sprite_position
+        sprite_width, sprite_height = sprite_image.size
+        return (
+            sprite_x - sprite_width // 2,
+            sprite_y - sprite_height // 2,
+            sprite_x + sprite_width // 2,
+            sprite_y + sprite_height // 2
+        )
+
+    def recolor_sprite_from_data(self, sprite_image: Image.Image, color_data: Dict[Tuple[int, int], Tuple[int, int, int]]) -> Image.Image:
+        """Recolor a sprite based on color data"""
+        recolored = sprite_image.copy()
+        pixels = recolored.load()
+        for pos, color in color_data.items():
+            pixels[pos[0], pos[1]] = color + (pixels[pos[0], pos[1]][3],)  # Preserve alpha
+        return recolored

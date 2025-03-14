@@ -4,9 +4,9 @@ import json
 import os
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageDraw
-from player import Player
-from game_state import GameState
-from unit import Unit, UnitType
+from pyRisk.player import Player
+from pyRisk.game_state import GameState
+from pyRisk.unit import Unit, UnitType
 
 
 class SaveLoadManager:

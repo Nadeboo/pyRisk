@@ -2,7 +2,7 @@
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-from unit import Unit, UnitType
+from pyRisk.unit import Unit, UnitType
 
 
 class UnitsScreen:

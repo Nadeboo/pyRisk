@@ -1,16 +1,18 @@
 # game_screen.py
 
-
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from PIL import ImageTk, ImageDraw, Image, ImageFont
-from utils import flood_fill
-from players_screen import PlayersScreen
-from utils import check_territory_in_radius
-from game_screen_overlay import GameScreenOverlay
-from sprite_manager import SpriteManager, SpriteInfo  # Add SpriteInfo here
+from pyRisk.utils import flood_fill, check_territory_in_radius
+from pyRisk.players_screen import PlayersScreen
+from pyRisk.game_screen_overlay import GameScreenOverlay
+from pyRisk.sprite_manager import SpriteManager, SpriteInfo
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, Any
+from pyRisk.canvas_manager import CanvasManager
+from pyRisk.sidebar_manager import SidebarManager
+from pyRisk.map_interaction_manager import MapInteractionManager
+
 class GameScreen:
     def __init__(self, parent, app):
         self.parent = parent
@@ -86,6 +88,16 @@ class GameScreen:
         # Bind events
         self.bind_events()
         
+        # Initialize managers
+        self.sidebar_manager = SidebarManager(self.main_container, app)
+        self.canvas_manager = CanvasManager(self.main_container, app)
+        self.map_interaction_manager = MapInteractionManager(app)
+        
+        # Store references in app for access from other components
+        self.app.sprite_manager = self.sprite_manager
+        self.app.sidebar_manager = self.sidebar_manager
+        self.app.canvas_manager = self.canvas_manager
+        self.app.map_interaction_manager = self.map_interaction_manager
 
     def create_tooltip(self, widget, text):
         """Create a tooltip for a widget"""
@@ -206,6 +218,7 @@ class GameScreen:
         self.v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
     def toggle_unit_mode(self):
         """Toggle between unit movement mode and regular map editing mode"""
         self.unit_mode = not self.unit_mode
@@ -336,7 +349,7 @@ class GameScreen:
                 return
 
         # Check for existing sprite at this location with radius check
-        existing_sprite, sprite_pos = self.get_sprite_at_position(x, y)
+        existing_sprite, sprite_pos = self.sprite_manager.get_sprite_at_position(x, y)
         
         # Create popup menu
         popup = tk.Menu(self.canvas, tearoff=0)
@@ -345,7 +358,7 @@ class GameScreen:
             # Options for existing sprite
             popup.add_command(
                 label=f"Remove {existing_sprite.sprite_type}",
-                command=lambda: self.remove_sprite(sprite_pos)
+                command=lambda: self.sprite_manager.remove_sprite(sprite_pos)
             )
         else:
             # Add sprite placement options
@@ -356,63 +369,63 @@ class GameScreen:
                 
                 # Cities and Infrastructure
                 structures_menu.add_command(label="City", 
-                    command=lambda: self.add_sprite('city', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('city', (x, y)))
                 structures_menu.add_command(label="Trading Post", 
-                    command=lambda: self.add_sprite('trading_post', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('trading_post', (x, y)))
                 structures_menu.add_command(label="Embassy", 
-                    command=lambda: self.add_sprite('embassy', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('embassy', (x, y)))
                 
                 # Resource Buildings
                 resources_menu = tk.Menu(popup, tearoff=0)
                 structures_menu.add_cascade(label="Resource Buildings", menu=resources_menu)
                 resources_menu.add_command(label="Farm", 
-                    command=lambda: self.add_sprite('farm', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('farm', (x, y)))
                 resources_menu.add_command(label="Mine", 
-                    command=lambda: self.add_sprite('mine', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('mine', (x, y)))
                 resources_menu.add_command(label="Workshop", 
-                    command=lambda: self.add_sprite('workshop', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('workshop', (x, y)))
                 
                 # Military Structures
                 military_menu = tk.Menu(popup, tearoff=0)
                 structures_menu.add_cascade(label="Military Structures", menu=military_menu)
                 military_menu.add_command(label="Fort (Stage 1)", 
-                    command=lambda: self.add_sprite('fort_1', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('fort_1', (x, y)))
                 military_menu.add_command(label="Fort (Stage 2)", 
-                    command=lambda: self.add_sprite('fort_2', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('fort_2', (x, y)))
                 military_menu.add_command(label="Fort (Stage 3)", 
-                    command=lambda: self.add_sprite('fort_3', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('fort_3', (x, y)))
                 military_menu.add_command(label="Wall (Stage 1)", 
-                    command=lambda: self.add_sprite('wall_1', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('wall_1', (x, y)))
                 military_menu.add_command(label="Wall (Stage 2)", 
-                    command=lambda: self.add_sprite('wall_2', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('wall_2', (x, y)))
                 
                 # Magical/Religious Structures
                 magical_menu = tk.Menu(popup, tearoff=0)
                 structures_menu.add_cascade(label="Magical/Religious", menu=magical_menu)
                 magical_menu.add_command(label="Shrine (Stage 1)", 
-                    command=lambda: self.add_sprite('shrine_1', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('shrine_1', (x, y)))
                 magical_menu.add_command(label="Shrine (Stage 2)", 
-                    command=lambda: self.add_sprite('shrine_2', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('shrine_2', (x, y)))
                 magical_menu.add_command(label="Monastery", 
-                    command=lambda: self.add_sprite('monastery', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('monastery', (x, y)))
                 magical_menu.add_command(label="Observatory", 
-                    command=lambda: self.add_sprite('observatory', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('observatory', (x, y)))
                 magical_menu.add_command(label="Research Lab", 
-                    command=lambda: self.add_sprite('research_lab', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('research_lab', (x, y)))
                 magical_menu.add_command(label="Henge", 
-                    command=lambda: self.add_sprite('henge', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('henge', (x, y)))
                 
                 # Transport/Infrastructure
                 transport_menu = tk.Menu(popup, tearoff=0)
                 structures_menu.add_cascade(label="Transport", menu=transport_menu)
                 transport_menu.add_command(label="Bridge", 
-                    command=lambda: self.add_sprite('bridge', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('bridge', (x, y)))
                 transport_menu.add_command(label="Tunnel (Stage 1)", 
-                    command=lambda: self.add_sprite('tunnel_1', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('tunnel_1', (x, y)))
                 transport_menu.add_command(label="Tunnel (Stage 2)", 
-                    command=lambda: self.add_sprite('tunnel_2', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('tunnel_2', (x, y)))
                 transport_menu.add_command(label="Waystone", 
-                    command=lambda: self.add_sprite('waystone', x, y))
+                    command=lambda: self.sprite_manager.add_sprite('waystone', (x, y)))
             else:
                 popup.add_command(
                     label="Place Structure (Select a player first)",
@@ -420,267 +433,6 @@ class GameScreen:
                 )
         
         popup.tk_popup(event.x_root, event.y_root)
-
-
-    def add_sprite(self, sprite_type, x, y):
-        """Add a sprite to the map with enhanced handling for different sprite types"""
-        if not self.app.selected_player:
-            return
-            
-        owner = self.app.selected_player.name
-        sprite_name = None
-        
-        # Special handling for different sprite types
-        if sprite_type == 'city':
-            sprite_name = simpledialog.askstring("City Name", "Enter name for the city:")
-            if sprite_name is None:  # User cancelled
-                return
-            if not sprite_name.strip():  # Empty name
-                sprite_name = f"{owner}'s City"
-        
-        # Initialize extra data based on sprite type
-        extra_data = {}
-        if sprite_type == 'city':
-            extra_data['slots'] = []  # For city improvements
-        elif sprite_type.startswith('fort_'):
-            stage = int(sprite_type[-1])
-            extra_data['stage'] = stage
-            extra_data['garrison'] = []  # For garrisoned units
-        elif sprite_type.startswith('shrine_'):
-            stage = int(sprite_type[-1])
-            extra_data['stage'] = stage
-            extra_data['blessing_type'] = None
-        elif sprite_type.startswith('wall_'):
-            stage = int(sprite_type[-1])
-            extra_data['stage'] = stage
-        elif sprite_type == 'trading_post':
-            extra_data['trade_routes'] = []
-        elif sprite_type == 'embassy':
-            extra_data['diplomatic_relations'] = {}
-        
-        # Create sprite info with name and extra data
-        sprite_info = SpriteInfo(
-            sprite_type=sprite_type,
-            position=(x, y),
-            owner=owner,
-            name=sprite_name,
-            extra_data=extra_data
-        )
-        
-        # Add to placed sprites
-        self.app.placed_sprites[(x, y)] = sprite_info
-        self.display_map_image()
-        return True
-
-    def remove_sprite(self, position):
-        """Remove a sprite from the map"""
-        if self.sprite_manager.remove_sprite(position):
-            self.display_map_image()
-
-    def get_sprite_at_position(self, click_x, click_y, radius=10):
-            """Find a sprite near the clicked position within a radius"""
-            for pos, sprite_info in self.sprite_manager.placed_sprites.items():
-                sprite_x, sprite_y = pos
-                if abs(sprite_x - click_x) <= radius and abs(sprite_y - click_y) <= radius:
-                    return sprite_info, pos
-            return None, None
-
-    def update_resource_ownership(self):
-        """Update ownership of all resources based on surrounding territory"""
-        if not self.app.map_image or self.app.roll_mode != 'tregonia':
-            print("Resource ownership update skipped - no map or wrong mode")
-            return
-            
-        print("\n=== Starting Resource Ownership Update ===")
-        print(f"Total resources to check: {len(self.app.resource_tiles)}")
-        print(f"Current tile owners count: {len(self.app.tile_owners)}")
-        
-        changes_made = False
-        for pos, resource_info in self.app.resource_tiles.items():
-            x, y = pos
-            print(f"\nChecking resource at position {pos}")
-            print(f"Current resource info: {resource_info}")
-            
-            # Check territory in radius around resource
-            dominant_player, territory_count = check_territory_in_radius(
-                self.app.map_image,
-                self.app.tile_owners,
-                x, y,
-                radius=100
-            )
-            
-            current_owner = resource_info.get('owner')
-            print(f"Current owner: {current_owner}")
-            print(f"Detected dominant player: {dominant_player}")
-            
-            if dominant_player != current_owner:
-                print(f"Ownership change detected!")
-                resource_info['owner'] = dominant_player
-                changes_made = True
-                if dominant_player:
-                    print(f"Resource at {pos} claimed by {dominant_player} with {territory_count} surrounding tiles")
-                else:
-                    print(f"Resource at {pos} no longer controlled by any player")
-        
-        print("\n=== Resource Update Summary ===")
-        print(f"Changes made: {changes_made}")
-        
-        if changes_made:
-            print("Updating player resources and display...")
-            self.app.update_player_resources()
-            self.display_map_image()
-            if hasattr(self.app.current_screen, 'update_player_list'):
-                self.app.current_screen.update_player_list()
-
-
-    def remove_unit_from_army(self, army, unit):
-        """Remove a single unit from an army"""
-        if unit in army.sub_units:
-            army.sub_units.remove(unit)
-            self.app.units.remove(unit)
-            
-            # Refresh displays
-            self.display_map_image()
-            if hasattr(self.app.current_screen, 'update_army_list'):
-                self.app.current_screen.update_army_list()
-
-    def remove_unit_from_map(self, unit):
-        """Remove a unit from the map without deleting it from the game"""
-        unit.position = None
-        if unit.is_army:
-            # If it's an army, remove all sub-units from map too
-            for sub_unit in unit.sub_units:
-                sub_unit.position = None
-        self.display_map_image()
-
-    def delete_unit(self, unit):
-        """Delete a unit from both the map and the units list"""
-        # First remove any sub-units if this is an army
-        if unit.sub_units:
-            for sub_unit in unit.sub_units[:]:  # Create a copy of the list to avoid modification while iterating
-                self.app.units.remove(sub_unit)
-        
-        # Remove the unit itself
-        self.app.units.remove(unit)
-        
-        # Refresh displays
-        self.display_map_image()
-        if hasattr(self.app.current_screen, 'update_army_list'):
-            self.app.current_screen.update_army_list()
-
-    def get_viewport_bounds(self):
-        """Get the current viewport bounds in original image coordinates"""
-        if not self.app.map_image:
-            return None
-
-        # Get canvas dimensions and scroll position
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-        x_view = self.canvas.xview()
-        y_view = self.canvas.yview()
-
-        # Calculate visible coordinates
-        x1 = int(x_view[0] * self.app.map_image.width * self.zoom_level)
-        y1 = int(y_view[0] * self.app.map_image.height * self.zoom_level)
-        x2 = int(x_view[1] * self.app.map_image.width * self.zoom_level)
-        y2 = int(y_view[1] * self.app.map_image.height * self.zoom_level)
-
-        # Convert to original image coordinates
-        x1 = max(0, int(x1 / self.zoom_level))
-        y1 = max(0, int(y1 / self.zoom_level))
-        x2 = min(self.app.map_image.width, int(x2 / self.zoom_level))
-        y2 = min(self.app.map_image.height, int(y2 / self.zoom_level))
-
-        return (x1, y1, x2, y2)
-
-    def get_visible_sprite_bounds(self, sprite_position, sprite_image):
-        """Check if a sprite is visible in the current viewport"""
-        if not self.app.map_image:
-            return None
-
-        viewport = self.get_viewport_bounds()
-        if not viewport:
-            return None
-
-        x, y = sprite_position
-        sprite_width = sprite_image.width
-        sprite_height = sprite_image.height
-
-        # Calculate sprite bounds
-        sprite_x1 = x - sprite_width // 2
-        sprite_y1 = y - sprite_height // 2
-        sprite_x2 = sprite_x1 + sprite_width
-        sprite_y2 = sprite_y1 + sprite_height
-
-        # Check if sprite intersects viewport
-        if (sprite_x2 < viewport[0] or sprite_x1 > viewport[2] or
-            sprite_y2 < viewport[1] or sprite_y1 > viewport[3]):
-            return None
-
-        return (sprite_x1, sprite_y1, sprite_x2, sprite_y2)
-    
-    def flood_fill_sprite(self, sprite_info, click_x, click_y, player_color):
-        """Handle flood fill within a sprite"""
-        sprite_image = self.sprite_manager.sprites.get(sprite_info.sprite_type)
-        if not sprite_image:
-            return None
-            
-        # Create a copy of the sprite to modify
-        sprite_to_modify = sprite_image.copy()
-        
-        # Get sprite position and calculate click position relative to sprite
-        sprite_x, sprite_y = sprite_info.position
-        local_x = click_x - (sprite_x - sprite_image.width // 2)
-        local_y = click_y - (sprite_y - sprite_image.height // 2)
-        
-        # Check if click is within sprite bounds
-        if (0 <= local_x < sprite_image.width and 
-            0 <= local_y < sprite_image.height):
-            
-            # Get target color at click position
-            target_pixel = sprite_to_modify.getpixel((local_x, local_y))
-            if len(target_pixel) == 4 and target_pixel[3] == 0:  # Skip transparent pixels
-                return None
-                
-            # Determine fill color based on whether we're erasing or coloring
-            if len(player_color) == 4 and player_color[3] == 0:
-                # We're erasing - use full transparency
-                fill_color = (0, 0, 0, 0)
-            else:
-                # We're coloring - use semi-transparent color
-                fill_color = (*player_color, 128)
-            
-            # If sprite doesn't have color data initialized, create it
-            if 'color_data' not in sprite_info.extra_data:
-                sprite_info.extra_data['color_data'] = {}
-            
-            # Store the flood fill region in the sprite's color data
-            region = flood_fill(sprite_to_modify, local_x, local_y, target_pixel, fill_color)
-            if region:
-                # Store color data for each affected pixel
-                for px, py in region['boundary']:
-                    key = f"{px},{py}"
-                    if fill_color[3] == 0:  # If erasing
-                        sprite_info.extra_data['color_data'].pop(key, None)  # Remove the color data
-                    else:
-                        sprite_info.extra_data['color_data'][key] = fill_color
-                    
-                return True
-        
-        return None
-
-    def recolor_sprite_from_data(self, sprite_image, color_data):
-        """Reapply stored color data to a sprite image"""
-        if not color_data:
-            return sprite_image
-            
-        result = sprite_image.copy()
-        for coord_str, color in color_data.items():
-            x, y = map(int, coord_str.split(','))
-            if 0 <= x < sprite_image.width and 0 <= y < sprite_image.height:
-                result.putpixel((x, y), color)
-                
-        return result
 
     def display_map_image(self):
         """Display the map image with current zoom level and overlay"""
@@ -835,7 +587,6 @@ class GameScreen:
 
         # Update scroll region
         self.canvas.config(scrollregion=(0, 0, display_image.width, display_image.height))
-
 
     def draw_units(self):
         """Draw units separately to avoid including them in tile cache"""
@@ -1001,7 +752,7 @@ class GameScreen:
             return
 
         # Handle map coloring
-        self.handle_map_coloring(x, y)
+        self.map_interaction_manager.handle_map_coloring(x, y)
 
     def handle_map_coloring(self, x, y):
         """Handle map coloring using region-based approach"""
@@ -1027,7 +778,7 @@ class GameScreen:
             self.app.map_history.pop(0)
 
         # First check if we clicked on a city sprite
-        clicked_sprite, sprite_pos = self.get_sprite_at_position(x, y)
+        clicked_sprite, sprite_pos = self.sprite_manager.get_sprite_at_position(x, y)
         if clicked_sprite and clicked_sprite.sprite_type == 'city':
             if self.app.mode == 'erase':
                 # Instead of removing the sprite, flood fill with transparency

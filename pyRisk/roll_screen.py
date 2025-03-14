@@ -2,9 +2,9 @@
 
 import tkinter as tk
 from tkinter import messagebox
-from roll_table import RollTable
+from pyRisk.roll_table import RollTable
 from PIL import ImageTk, ImageDraw
-from game_screen import GameScreen  # Ensure this import exists
+from pyRisk.game_screen import GameScreen  # Ensure this import exists
 
 class RollScreen:
     MAX_ROLL_LENGTH = 20  # Max digits allowed

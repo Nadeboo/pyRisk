@@ -2,7 +2,7 @@
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-from research import ResearchTier, ResearchType
+from pyRisk.research import ResearchTier, ResearchType
 
 class ResearchScreen:
     def __init__(self, parent, app):

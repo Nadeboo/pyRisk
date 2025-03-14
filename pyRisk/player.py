@@ -1,6 +1,6 @@
 # player.py
 
-from research import ResearchManager, ResearchType
+from pyRisk.research import ResearchManager, ResearchType
 
 class Player:
     def __init__(self, name, color, faction=None):

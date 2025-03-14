@@ -1,25 +1,24 @@
-
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, colorchooser
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import os
 import json
 
-from player import Player
-from game_state import GameState
-from roll_table import RollTable
-from unit import Unit, UnitType
-from save_load_manager import SaveLoadManager
+from pyRisk.player import Player
+from pyRisk.game_state import GameState
+from pyRisk.roll_table import RollTable
+from pyRisk.unit import Unit, UnitType
+from pyRisk.save_load_manager import SaveLoadManager
 
 # Import the screen classes
-from game_screen import GameScreen
-from players_screen import PlayersScreen
-from alliances_screen import AlliancesScreen
-from roll_screen import RollScreen
-from start_screen import StartScreen
-from units_screen import UnitsScreen
-from research_screen import ResearchScreen
-from cities_screen import CitiesScreen
+from pyRisk.game_screen import GameScreen
+from pyRisk.players_screen import PlayersScreen
+from pyRisk.alliances_screen import AlliancesScreen
+from pyRisk.roll_screen import RollScreen
+from pyRisk.start_screen import StartScreen
+from pyRisk.units_screen import UnitsScreen
+from pyRisk.research_screen import ResearchScreen
+from pyRisk.cities_screen import CitiesScreen
 
 
 class MSPaintRiskEditor:
@@ -563,8 +562,11 @@ class MSPaintRiskEditor:
         return name, color, faction
 
 
-if __name__ == "__main__":
+def main():
     root = tk.Tk()
     app = MSPaintRiskEditor(root)
     root.protocol("WM_DELETE_WINDOW", app.on_exit)
     root.mainloop()
+
+if __name__ == "__main__":
+    main()

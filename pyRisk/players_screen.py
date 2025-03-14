@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import simpledialog, colorchooser, messagebox, filedialog
 from PIL import Image, ImageGrab
-from player import Player
+from pyRisk.player import Player
 
 class ResourceCounter(tk.Frame):
     def __init__(self, parent, name, get_value, set_value, get_per_turn, set_per_turn):

@@ -60,17 +60,26 @@ class SpriteManager:
             print(f"Sprite type {sprite_type} not found")
             return False
 
+        # Add the sprite
         self.app.placed_sprites[position] = SpriteInfo(
             sprite_type=sprite_type,
             position=position,
-            owner=owner,
+            owner=owner or (self.app.selected_player.name if self.app.selected_player else None),
             extra_data=extra_data
         )
+        
+        # Update the display if we have a current screen
+        if hasattr(self.app, 'current_screen'):
+            self.app.current_screen.display_map_image()
         return True
 
     def remove_sprite(self, position: Tuple[int, int]) -> bool:
         """Remove a sprite from the given position"""
-        return self.app.placed_sprites.pop(position, None) is not None
+        result = self.app.placed_sprites.pop(position, None) is not None
+        # Update the display if we have a current screen
+        if result and hasattr(self.app, 'current_screen'):
+            self.app.current_screen.display_map_image()
+        return result
 
     def get_sprite(self, position: Tuple[int, int]) -> Optional[SpriteInfo]:
         """Get sprite information at the given position"""

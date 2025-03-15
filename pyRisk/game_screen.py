@@ -40,11 +40,14 @@ class GameScreen:
         # Initialize overlay drawer
         self.overlay_drawer = GameScreenOverlay()
 
-        # Create main layout container
+        # Initialize managers
+        self.map_interaction_manager = MapInteractionManager(app)
+        
+        # Create single main layout container
         self.main_container = tk.Frame(self.frame)
         self.main_container.pack(fill=tk.BOTH, expand=True)
 
-        # Create container frames
+        # Create sidebar and map container
         self.sidebar = tk.Frame(self.main_container, width=150, bg='lightgrey')
         self.map_container = tk.Frame(self.main_container)
 
@@ -57,29 +60,25 @@ class GameScreen:
         self.setup_canvas()
         self.setup_sidebar()
 
-        # Initialize zoom parameters with optimized defaults
+        # Initialize zoom parameters
         self.zoom_level = 1.0
         self.min_zoom = 0.1
         self.max_zoom = 5.0
         self.zoom_update_id = None
 
-        # Optimized canvas configuration
+        # Configure canvas
         self.canvas.configure(
-            scrollregion=(0, 0, 1, 1),  # Will be updated when image is loaded
-            insertwidth=0,              # Remove cursor indicator
-            highlightthickness=0        # Remove highlight border
-        )
-
-        # Buffer for storing rendered tiles
-        self.tile_cache = {}
-        self.tile_size = 256  # Standard tile size for efficient rendering
-
-        # Performance optimizations
-        self.canvas.configure(
-            xscrollincrement=1,    # Smooth scrolling
+            scrollregion=(0, 0, 1, 1),
+            insertwidth=0,
+            highlightthickness=0,
+            xscrollincrement=1,
             yscrollincrement=1,
-            takefocus=True         # Enable keyboard focus for better event handling
+            takefocus=True
         )
+
+        # Initialize tile cache
+        self.tile_cache = {}
+        self.tile_size = 256
 
         # Display map if exists
         if self.app.map_image:
@@ -88,15 +87,8 @@ class GameScreen:
         # Bind events
         self.bind_events()
         
-        # Initialize managers
-        self.sidebar_manager = SidebarManager(self.main_container, app)
-        self.canvas_manager = CanvasManager(self.main_container, app)
-        self.map_interaction_manager = MapInteractionManager(app)
-        
-        # Store references in app for access from other components
+        # Store references in app
         self.app.sprite_manager = self.sprite_manager
-        self.app.sidebar_manager = self.sidebar_manager
-        self.app.canvas_manager = self.canvas_manager
         self.app.map_interaction_manager = self.map_interaction_manager
 
     def create_tooltip(self, widget, text):
@@ -349,7 +341,11 @@ class GameScreen:
                 return
 
         # Check for existing sprite at this location with radius check
-        existing_sprite, sprite_pos = self.sprite_manager.get_sprite_at_position(x, y)
+        sprite_result = self.sprite_manager.get_sprite_at_position(x, y)
+        existing_sprite = None
+        sprite_pos = None
+        if sprite_result is not None:
+            sprite_pos, existing_sprite = sprite_result
         
         # Create popup menu
         popup = tk.Menu(self.canvas, tearoff=0)
@@ -369,7 +365,7 @@ class GameScreen:
                 
                 # Cities and Infrastructure
                 structures_menu.add_command(label="City", 
-                    command=lambda: self.sprite_manager.add_sprite('city', (x, y)))
+                    command=lambda: self.place_city(x, y))
                 structures_menu.add_command(label="Trading Post", 
                     command=lambda: self.sprite_manager.add_sprite('trading_post', (x, y)))
                 structures_menu.add_command(label="Embassy", 
@@ -434,6 +430,63 @@ class GameScreen:
         
         popup.tk_popup(event.x_root, event.y_root)
 
+    def place_city(self, x, y):
+        """Place a city with a name prompt and color it with the player's color"""
+        city_name = simpledialog.askstring("New City", "Enter city name:")
+        if city_name:
+            # Create the city with the provided name
+            success = self.sprite_manager.add_sprite('city', (x, y), extra_data={'name': city_name})
+            if not success:
+                print("Failed to create city")
+                return
+            
+            # Get the sprite info for the newly created city
+            sprite_result = self.sprite_manager.get_sprite_at_position(x, y)
+            if sprite_result is None:
+                print("Could not find placed city")
+                return
+            
+            sprite_pos, sprite_info = sprite_result
+            
+            # Color the city with the player's color if a player is selected
+            if self.app.selected_player and sprite_info:
+                # Get the sprite image
+                sprite_image = self.sprite_manager.sprites.get('city')
+                if sprite_image:
+                    # Create a working copy and ensure it's in RGBA mode
+                    working_image = sprite_image.convert('RGBA')
+                    pixels = working_image.load()
+                    width, height = working_image.size
+                    
+                    # Color all gray pixels with player color
+                    target_gray = (211, 211, 211)  # The gray color used in city sprites
+                    player_color = (*self.app.selected_player.color[:3], 255)  # Fully opaque player color
+                    
+                    print(f"Coloring city with color: {player_color}")
+                    colored_pixels = 0
+                    
+                    for x in range(width):
+                        for y in range(height):
+                            pixel = pixels[x, y]
+                            # Check if pixel is the target gray (allowing some tolerance)
+                            if all(abs(a - b) <= 5 for a, b in zip(pixel[:3], target_gray)):
+                                pixels[x, y] = player_color
+                                colored_pixels += 1
+                    
+                    print(f"Colored {colored_pixels} pixels in the city sprite")
+                    
+                    # Convert back to RGB to ensure full opacity
+                    working_image = working_image.convert('RGB')
+                    
+                    # Store the colored sprite
+                    if not sprite_info.extra_data:
+                        sprite_info.extra_data = {}
+                    sprite_info.extra_data['colored_sprite'] = working_image
+                    sprite_info.owner = self.app.selected_player.name
+                    
+                    # Update display
+                    self.display_map_image()
+
     def display_map_image(self):
         """Display the map image with current zoom level and overlay"""
         if self.app.map_image is None:
@@ -457,53 +510,35 @@ class GameScreen:
             name_font = ImageFont.load_default()
         
         # Draw sprites (including cities)
-        TARGET_GRAY = (211, 211, 211)  # The specific gray color to replace in fort_3 and city
-        
         for pos, sprite_info in self.sprite_manager.placed_sprites.items():
             sprite_x, sprite_y = pos
             sprite_image = self.sprite_manager.sprites.get(sprite_info.sprite_type)
             if sprite_image:
-                # Handle fort_3 and city color replacement
-                if sprite_info.sprite_type in ['fort_3', 'city']:
-                    # Create a copy of the sprite to modify
-                    sprite_to_draw = sprite_image.copy()
-                    pixels = sprite_to_draw.load()
-                    width, height = sprite_to_draw.size
-                    
-                    # Find the owner's color
-                    owner = next((p for p in self.app.players if p.name == sprite_info.owner), None)
-                    if owner:
-                        # Replace the specific gray color with owner's color
-                        for x in range(width):
-                            for y in range(height):
-                                pixel = pixels[x, y]
-                                if len(pixel) == 4:  # RGBA
-                                    if pixel[:3] == TARGET_GRAY:
-                                        pixels[x, y] = (*owner.color, pixel[3])  # Preserve alpha
-                                elif pixel == TARGET_GRAY:  # RGB
-                                    pixels[x, y] = owner.color
+                # Check if we have a pre-colored sprite
+                if 'colored_sprite' in sprite_info.extra_data:
+                    sprite_to_draw = sprite_info.extra_data['colored_sprite']
                 else:
-                    # For all other sprites, use as-is
-                    sprite_to_draw = sprite_image
-                
-                # Apply any stored color data
-                if 'color_data' in sprite_info.extra_data:
-                    sprite_to_draw = self.recolor_sprite_from_data(
-                        sprite_to_draw,
-                        sprite_info.extra_data['color_data']
-                    )
+                    # Use original sprite
+                    sprite_to_draw = sprite_image.copy()
                 
                 # Calculate paste position
                 paste_x = sprite_x - sprite_to_draw.width // 2
                 paste_y = sprite_y - sprite_to_draw.height // 2
                 
-                # Paste the sprite
+                # Ensure sprite is in RGBA mode for proper transparency
+                if sprite_to_draw.mode != 'RGBA':
+                    sprite_to_draw = sprite_to_draw.convert('RGBA')
+                
+                # Paste the sprite with transparency mask
                 display_image.paste(sprite_to_draw, (paste_x, paste_y), sprite_to_draw)
                 
                 # Draw name if it's a city
-                if sprite_info.sprite_type == 'city' and sprite_info.name:
+                if sprite_info.sprite_type == 'city':
+                    # Get city name from extra_data
+                    city_name = sprite_info.extra_data.get('name', 'Unnamed City')
+                    
                     # Calculate text size for centering
-                    text_bbox = draw.textbbox((0, 0), sprite_info.name, font=name_font)
+                    text_bbox = draw.textbbox((0, 0), city_name, font=name_font)
                     text_width = text_bbox[2] - text_bbox[0]
                     
                     # Position text centered below the sprite
@@ -517,11 +552,11 @@ class GameScreen:
                         (-1, 1),  (0, 1),  (1, 1)
                     ]
                     for dx, dy in outline_positions:
-                        draw.text((text_x + dx, text_y + dy), sprite_info.name, 
+                        draw.text((text_x + dx, text_y + dy), city_name, 
                                 font=name_font, fill=(0, 0, 0))
                     
                     # Draw main text (white)
-                    draw.text((text_x, text_y), sprite_info.name, 
+                    draw.text((text_x, text_y), city_name, 
                             font=name_font, fill=(255, 255, 255))
 
         # Draw units if in Tregonia mode
@@ -587,6 +622,35 @@ class GameScreen:
 
         # Update scroll region
         self.canvas.config(scrollregion=(0, 0, display_image.width, display_image.height))
+
+    def recolor_sprite_from_data(self, sprite_image, color_data):
+        """Apply color data to a sprite image.
+        
+        Args:
+            sprite_image: PIL Image to recolor
+            color_data: Dictionary mapping target colors to replacement colors
+            
+        Returns:
+            Modified copy of the sprite image
+        """
+        # Create a copy of the sprite to modify
+        sprite_to_draw = sprite_image.copy()
+        pixels = sprite_to_draw.load()
+        width, height = sprite_to_draw.size
+        
+        # For each pixel in the sprite
+        for x in range(width):
+            for y in range(height):
+                pixel = pixels[x, y]
+                # Check if this pixel's color should be replaced
+                if pixel[:3] in color_data:
+                    new_color = color_data[pixel[:3]]
+                    if len(pixel) == 4:  # RGBA
+                        pixels[x, y] = (*new_color, pixel[3])  # Preserve alpha
+                    else:  # RGB
+                        pixels[x, y] = new_color
+                        
+        return sprite_to_draw
 
     def draw_units(self):
         """Draw units separately to avoid including them in tile cache"""
@@ -748,14 +812,16 @@ class GameScreen:
             return
 
         # Check if click is within image bounds
-        if x >= self.app.map_image.width or y >= self.app.map_image.height:
+        if x < 0 or y < 0 or x >= self.app.map_image.width or y >= self.app.map_image.height:
             return
 
-        # Handle map coloring
+        # Handle map coloring through the map interaction manager
         self.map_interaction_manager.handle_map_coloring(x, y)
 
     def handle_map_coloring(self, x, y):
         """Handle map coloring using region-based approach"""
+        print(f"handle_map_coloring called at coordinates: ({x}, {y})")  # Debug
+        
         # Save current state before modification
         current_sprites_data = {}
         for pos, sprite_info in self.sprite_manager.placed_sprites.items():
@@ -778,24 +844,40 @@ class GameScreen:
             self.app.map_history.pop(0)
 
         # First check if we clicked on a city sprite
-        clicked_sprite, sprite_pos = self.sprite_manager.get_sprite_at_position(x, y)
+        sprite_result = self.sprite_manager.get_sprite_at_position(x, y)
+        print(f"Sprite at position: {sprite_result}")  # Debug
+        
+        clicked_sprite = None
+        sprite_pos = None
+        if sprite_result is not None:
+            sprite_pos, clicked_sprite = sprite_result
+            print(f"Found sprite: type={clicked_sprite.sprite_type}, owner={clicked_sprite.owner}")  # Debug
+            
         if clicked_sprite and clicked_sprite.sprite_type == 'city':
+            print("Clicked on a city sprite")  # Debug
             if self.app.mode == 'erase':
+                print("In erase mode")  # Debug
                 # Instead of removing the sprite, flood fill with transparency
                 sprite_image = self.sprite_manager.sprites.get(clicked_sprite.sprite_type)
                 if sprite_image:
                     # Use a fully transparent color for erasing
                     transparent_color = (0, 0, 0, 0)
-                    if self.flood_fill_sprite(clicked_sprite, x, y, transparent_color):
+                    if self.map_interaction_manager.flood_fill_sprite(clicked_sprite, x, y, transparent_color):
+                        print("Erased city coloring")  # Debug
                         self.display_map_image()
                     return
             elif self.app.selected_player:
+                print(f"Attempting to color city for player: {self.app.selected_player.name}")  # Debug
                 # Try to flood fill the sprite
-                if self.flood_fill_sprite(clicked_sprite, x, y, self.app.selected_player.color):
+                if self.map_interaction_manager.flood_fill_sprite(clicked_sprite, x, y, self.app.selected_player.color):
+                    print("Successfully colored city")  # Debug
                     clicked_sprite.owner = self.app.selected_player.name
                     self.display_map_image()
                     return
+                else:
+                    print("Failed to color city")  # Debug
             elif self.app.selected_player is None and self.app.mode != 'erase':
+                print("No player selected")  # Debug
                 messagebox.showwarning("No Player Selected", "Please select a player before coloring.")
                 return
 

@@ -3,23 +3,41 @@ from tkinter import filedialog, messagebox, simpledialog, colorchooser
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import os
 import json
+import sys
+import time
 
-from pyRisk.player import Player
-from pyRisk.game_state import GameState
-from pyRisk.roll_table import RollTable
-from pyRisk.unit import Unit, UnitType
-from pyRisk.save_load_manager import SaveLoadManager
-
-# Import the screen classes
-from pyRisk.game_screen import GameScreen
-from pyRisk.players_screen import PlayersScreen
-from pyRisk.alliances_screen import AlliancesScreen
-from pyRisk.roll_screen import RollScreen
-from pyRisk.start_screen import StartScreen
-from pyRisk.units_screen import UnitsScreen
-from pyRisk.research_screen import ResearchScreen
-from pyRisk.cities_screen import CitiesScreen
-
+# Add parent directory to path when run as main script
+if __name__ == "__main__":
+    import os
+    import sys
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    from pyRisk.player import Player
+    from pyRisk.game_state import GameState
+    from pyRisk.roll_table import RollTable
+    from pyRisk.unit import Unit, UnitType
+    from pyRisk.save_load_manager import SaveLoadManager
+    from pyRisk.game_screen import GameScreen
+    from pyRisk.players_screen import PlayersScreen
+    from pyRisk.alliances_screen import AlliancesScreen
+    from pyRisk.roll_screen import RollScreen
+    from pyRisk.start_screen import StartScreen
+    from pyRisk.units_screen import UnitsScreen
+    from pyRisk.research_screen import ResearchScreen
+    from pyRisk.cities_screen import CitiesScreen
+else:
+    from .player import Player
+    from .game_state import GameState
+    from .roll_table import RollTable
+    from .unit import Unit, UnitType
+    from .save_load_manager import SaveLoadManager
+    from .game_screen import GameScreen
+    from .players_screen import PlayersScreen
+    from .alliances_screen import AlliancesScreen
+    from .roll_screen import RollScreen
+    from .start_screen import StartScreen
+    from .units_screen import UnitsScreen
+    from .research_screen import ResearchScreen
+    from .cities_screen import CitiesScreen
 
 class MSPaintRiskEditor:
     def __init__(self, master):
@@ -79,10 +97,15 @@ class MSPaintRiskEditor:
     def setup_ui(self):
         self.main_frame = tk.Frame(self.master)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Create toolbar frame
         self.toolbar = tk.Frame(self.main_frame)
         self.toolbar.pack(side=tk.TOP, fill=tk.X)
+        
+        # Create single content frame
         self.content_frame = tk.Frame(self.main_frame)
-        self.content_frame.pack(fill=tk.BOTH, expand=True)
+        self.content_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        
         self.setup_toolbar_buttons()
 
     def setup_toolbar_buttons(self):
@@ -93,7 +116,7 @@ class MSPaintRiskEditor:
         buttons = [
             ("Game", self.show_game_screen),
             ("Players", self.show_players_screen),
-            ("Cities", self.show_cities_screen),  # Added Cities button
+            ("Cities", self.show_cities_screen),
             ("Alliances", self.show_alliances_screen),
             ("Research", self.show_research_screen),
             ("Roll", self.show_roll_screen),

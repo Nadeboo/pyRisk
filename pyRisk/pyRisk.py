@@ -20,7 +20,6 @@ if __name__ == "__main__":
     from pyRisk.players_screen import PlayersScreen
     from pyRisk.alliances_screen import AlliancesScreen
     from pyRisk.roll_screen import RollScreen
-    from pyRisk.start_screen import StartScreen
     from pyRisk.units_screen import UnitsScreen
     from pyRisk.research_screen import ResearchScreen
     from pyRisk.cities_screen import CitiesScreen
@@ -34,7 +33,6 @@ else:
     from .players_screen import PlayersScreen
     from .alliances_screen import AlliancesScreen
     from .roll_screen import RollScreen
-    from .start_screen import StartScreen
     from .units_screen import UnitsScreen
     from .research_screen import ResearchScreen
     from .cities_screen import CitiesScreen
@@ -44,15 +42,21 @@ class MSPaintRiskEditor:
         self.master = master
         self.master.title("MSPaint Risk Editor")
         self.master.geometry("1024x768")
-        self.roll_mode = None  # Will be set by the StartScreen
+        self.roll_mode = 'tregonia'  # Always use Tregonia mode
         self.map_photo = None  # Initialize map_photo as None
         self.setup_menu()
         self.setup_ui()
         self.initialize_variables()
-        self.show_start_screen()  # Start with the StartScreen
         self.resource_tiles = {}
         self.RESOURCE_COLOR = (255, 255, 0)  # RGB for #45AD22
-
+        
+        # Setup memory monitoring
+        self.memory_monitoring = False
+        self.memory_log_file = None
+        
+        # Automatically load the map
+        self.load_default_map()
+        
     def initialize_variables(self):
             self.game_name = "Untitled Game"
             self.current_turn = 0
@@ -81,18 +85,32 @@ class MSPaintRiskEditor:
                 os.makedirs(self.temp_dir)
             
     def setup_menu(self):
-        self.menu_bar = tk.Menu(self.master)
-        self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.file_menu.add_command(label="Import Map", command=self.import_map)
-        self.file_menu.add_command(label="Export Map", command=self.export_map)
-        self.file_menu.add_command(label="Export GIF", command=self.export_gif)
-        self.file_menu.add_separator()
-        self.file_menu.add_command(label="Save Game", command=self.save_game)
-        self.file_menu.add_command(label="Load Game", command=self.load_game)
-        self.file_menu.add_separator()
-        self.file_menu.add_command(label="Exit", command=self.on_exit)
-        self.menu_bar.add_cascade(label="File", menu=self.file_menu)
-        self.master.config(menu=self.menu_bar)
+        """Setup the application menu"""
+        menubar = tk.Menu(self.master)
+        
+        # File menu
+        filemenu = tk.Menu(menubar, tearoff=0)
+        filemenu.add_command(label="Import Map", command=self.import_map)
+        filemenu.add_command(label="Save Game", command=self.save_game)
+        filemenu.add_command(label="Load Game", command=self.load_game)
+        filemenu.add_command(label="Export GIF", command=self.export_gif)
+        filemenu.add_separator()
+        filemenu.add_command(label="Exit", command=self.on_exit)
+        menubar.add_cascade(label="File", menu=filemenu)
+        
+        # Tools menu
+        toolsmenu = tk.Menu(menubar, tearoff=0)
+        toolsmenu.add_command(label="Clear All Territory", command=self.clear_all_territory)
+        toolsmenu.add_command(label="Clear Image Caches", command=self.clear_image_caches)
+        menubar.add_cascade(label="Tools", menu=toolsmenu)
+        
+        # Debug menu
+        debugmenu = tk.Menu(menubar, tearoff=0)
+        debugmenu.add_command(label="Toggle Memory Monitoring", command=self.toggle_memory_monitoring)
+        debugmenu.add_command(label="Print Memory Usage", command=self.print_memory_usage)
+        menubar.add_cascade(label="Debug", menu=debugmenu)
+        
+        self.master.config(menu=menubar)
 
     def setup_ui(self):
         self.main_frame = tk.Frame(self.master)
@@ -141,28 +159,42 @@ class MSPaintRiskEditor:
 
         # Find all resource structures
         resource_structures = []
-        for x in range(map_width):
-            for y in range(map_height):
+        
+        # Use a more efficient scanning approach - scan in blocks
+        block_size = 4  # Check every 4th pixel initially
+        candidate_pixels = []
+        
+        # First pass: find candidate pixels using a grid approach
+        for x in range(0, map_width, block_size):
+            for y in range(0, map_height, block_size):
                 if (x, y) not in checked_pixels:
                     pixel = pixels[x, y]
                     if len(pixel) == 4:
                         pixel = pixel[:3]
                     
                     if pixel == self.RESOURCE_COLOR:
-                        # Found a new resource structure
-                        connected_pixels = self.find_connected_resource(x, y, pixels, checked_pixels, map_width, map_height)
-                        if connected_pixels:
-                            # Calculate the center of the structure
-                            avg_x = sum(x for x, _ in connected_pixels) // len(connected_pixels)
-                            avg_y = sum(y for _, y in connected_pixels) // len(connected_pixels)
-                            # Store the center as the resource location
-                            self.resource_tiles[(avg_x, avg_y)] = {'type': 'gold', 'amount': 1}
-                            resource_structures.append(connected_pixels)
+                        candidate_pixels.append((x, y))
+        
+        # Second pass: process candidate pixels to find full structures
+        for x, y in candidate_pixels:
+            if (x, y) not in checked_pixels:
+                connected_pixels = self.find_connected_resource(x, y, pixels, checked_pixels, map_width, map_height)
+                if connected_pixels and len(connected_pixels) > 0:
+                    # Calculate the center of the structure more efficiently
+                    x_sum = sum(x for x, _ in connected_pixels)
+                    y_sum = sum(y for _, y in connected_pixels)
+                    count = len(connected_pixels)
+                    avg_x = x_sum // count
+                    avg_y = y_sum // count
+                    
+                    # Store the center as the resource location
+                    self.resource_tiles[(avg_x, avg_y)] = {'type': 'gold', 'amount': 1}
+                    resource_structures.append(connected_pixels)
         
         print(f"Found {len(resource_structures)} distinct resource structures")
 
     def find_connected_resource(self, x, y, pixels, checked_pixels, map_width, map_height):
-        """Find all connected resource pixels starting from x,y"""
+        """Find all connected resource pixels starting from x,y using an iterative approach"""
         if (x, y) in checked_pixels:
             return set()
             
@@ -174,19 +206,32 @@ class MSPaintRiskEditor:
             return set()
             
         # This is a resource pixel we haven't checked
-        connected = {(x, y)}
-        checked_pixels.add((x, y))
+        connected = set()
+        stack = [(x, y)]
         
-        # Check adjacent pixels
-        for dx, dy in [(0,1), (1,0), (0,-1), (-1,0)]:
-            new_x, new_y = x + dx, y + dy
-            if 0 <= new_x < map_width and 0 <= new_y < map_height:
-                connected.update(self.find_connected_resource(new_x, new_y, pixels, checked_pixels, map_width, map_height))
+        while stack:
+            current_x, current_y = stack.pop()
+            
+            if (current_x, current_y) in checked_pixels:
+                continue
+                
+            # Add to connected set and mark as checked
+            connected.add((current_x, current_y))
+            checked_pixels.add((current_x, current_y))
+            
+            # Check adjacent pixels
+            for dx, dy in [(0,1), (1,0), (0,-1), (-1,0)]:
+                new_x, new_y = current_x + dx, current_y + dy
+                if 0 <= new_x < map_width and 0 <= new_y < map_height:
+                    if (new_x, new_y) not in checked_pixels:
+                        new_pixel = pixels[new_x, new_y]
+                        if len(new_pixel) == 4:
+                            new_pixel = new_pixel[:3]
+                        
+                        if new_pixel == self.RESOURCE_COLOR:
+                            stack.append((new_x, new_y))
                 
         return connected
-
-    def show_start_screen(self):
-        self.switch_screen(StartScreen)
 
     def show_game_screen(self):
         self.switch_screen(GameScreen)
@@ -219,12 +264,9 @@ class MSPaintRiskEditor:
         # Destroy current screen if it exists
         if self.current_screen:
             self.current_screen.destroy()
-        # Show or hide toolbar based on screen
-        if screen_class == StartScreen:
-            self.toolbar.pack_forget()
-        else:
-            self.toolbar.pack(side=tk.TOP, fill=tk.X)
-            self.setup_toolbar_buttons()
+        # Show toolbar
+        self.toolbar.pack(side=tk.TOP, fill=tk.X)
+        self.setup_toolbar_buttons()
         # Initialize new screen
         self.current_screen = screen_class(self.content_frame, self)
 
@@ -233,44 +275,22 @@ class MSPaintRiskEditor:
         import traceback
         import datetime
         
-        # Create error log file
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = f"error_log_{timestamp}.txt"
-        
         try:
             file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.png;*.jpg;*.jpeg")])
             
             if not file_path:
                 return
                 
-            # Log start of import
-            with open(log_file, 'w') as f:
-                f.write(f"Starting map import from: {file_path}\n")
-                f.write(f"Current mode: {self.roll_mode}\n")
-                f.write(f"Number of players: {len(self.players)}\n")
-                
             # Load image
             img = Image.open(file_path)
-            
-            # Log image details
-            with open(log_file, 'a') as f:
-                f.write(f"Image loaded successfully.\n")
-                f.write(f"Image size: {img.size}\n")
-                f.write(f"Image mode: {img.mode}\n")
             
             self.map_image = img.convert("RGBA")
             self.map_draw = ImageDraw.Draw(self.map_image)
             self.original_map_image = self.map_image.copy()
             self.tile_owners = {}
             
-            # Log conversion success
-            with open(log_file, 'a') as f:
-                f.write("Image converted to RGBA and initialized successfully\n")
-            
             # Scan for resource tiles if in Tregonia mode
             if self.roll_mode == 'tregonia':
-                with open(log_file, 'a') as f:
-                    f.write("Scanning for resource tiles...\n")
                 self.scan_for_resource_tiles()
             
             if isinstance(self.current_screen, GameScreen):
@@ -281,16 +301,19 @@ class MSPaintRiskEditor:
             self.save_current_map_state()
             self.map_history.clear()
             
-            with open(log_file, 'a') as f:
-                f.write("Map import completed successfully\n")
-            
         except Exception as e:
+            # Only create error log when an actual error occurs
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file = f"error_log_{timestamp}.txt"
+            
             # Log the full error details
-            with open(log_file, 'a') as f:
-                f.write("\nERROR OCCURRED:\n")
+            with open(log_file, 'w') as f:
+                f.write("\nERROR OCCURRED DURING MAP IMPORT:\n")
                 f.write(f"Error type: {type(e).__name__}\n")
                 f.write(f"Error message: {str(e)}\n")
-                f.write("\nFull stack trace:\n")
+                f.write(f"Map file: {file_path if 'file_path' in locals() else 'Not selected'}\n\n")
+                f.write("Full stack trace:\n")
                 traceback.print_exc(file=f)
                 
                 # Log additional state information
@@ -368,9 +391,36 @@ class MSPaintRiskEditor:
         
         # Reset resource gains for all players
         for player in self.players:
-            player.gold_per_turn = 0
+            # Clear previous resource sources
+            player.clear_resource_sources()
+            
+            # Set base resource gains for all players
+            player.gold_per_turn = 1  # Base 1 gold per turn
+            player.research_per_turn = 2  # Base 2 research per turn
             player.mana_per_turn = 0
-            print(f"Reset {player.name}'s resources to 0")
+            player.influence_per_turn = 0
+            
+            # Track base resource gains
+            player.add_resource_source('gold', 1, 'Base income')
+            player.add_resource_source('research', 2, 'Base income')
+            
+            # Apply race-specific bonuses
+            if player.faction == "HUMAN":
+                player.influence_per_turn += 1  # Humans get +1 influence
+                player.add_resource_source('influence', 1, 'Human race bonus')
+                print(f"Added +1 influence/turn for {player.name} (HUMAN)")
+            elif player.faction == "WIZARD":
+                player.mana_per_turn += 1  # Wizards get +1 mana
+                player.add_resource_source('mana', 1, 'Wizard race bonus')
+                print(f"Added +1 mana/turn for {player.name} (WIZARD)")
+            
+            # Apply region bonus to influence
+            if player.region_bonus > 0:
+                player.influence_per_turn += player.region_bonus
+                player.add_resource_source('influence', player.region_bonus, 'Region bonus')
+                print(f"Added +{player.region_bonus} influence/turn for {player.name} (Region bonus)")
+                
+            print(f"Reset {player.name}'s resources to base values")
             
         # Check each resource tile
         print(f"Processing {len(self.resource_tiles)} resource tiles")
@@ -385,11 +435,13 @@ class MSPaintRiskEditor:
                 if player:
                     if resource_type == 'gold':
                         player.gold_per_turn += 1
+                        player.add_resource_source('gold', 1, f'Gold tile at {pos}')
                         print(f"Added 1 gold/turn to {player.name}")
                     elif resource_type == 'mana':
                         player.mana_per_turn += 1
+                        player.add_resource_source('mana', 1, f'Mana tile at {pos}')
                         print(f"Added 1 mana/turn to {player.name}")
-                    print(f"{player.name} now has {player.gold_per_turn} gold/turn and {player.mana_per_turn} mana/turn")
+                    print(f"{player.name} now has {player.gold_per_turn} gold/turn, {player.research_per_turn} research/turn, {player.mana_per_turn} mana/turn, and {player.influence_per_turn} influence/turn")
 
     def load_game_state(self, state):
         """Load a specific game state"""
@@ -407,89 +459,12 @@ class MSPaintRiskEditor:
                 self.current_screen.display_map_image()
 
     def save_game(self):
-        if not self.game_states:
-            messagebox.showwarning("No Game to Save", "No game data to save.")
-            return
-        file_path = filedialog.asksaveasfilename(defaultextension=".mprg",
-                                                 filetypes=[("MSPaint Risk Game files", "*.mprg")])
-        if file_path:
-            game_data = {
-                "game_name": self.game_name,
-                "current_turn": self.current_turn,
-                "players": [{
-                    "name": player.name,
-                    "color": player.color,
-                    "faction": player.faction,
-                    "allies": [ally.name for ally in player.allies],
-                    "naps": [nap.name for nap in player.naps]
-                } for player in self.players],
-                "game_states": [state.map_image_path for state in self.game_states],
-                "roll_table": {
-                    "number_values": self.roll_table.number_values,
-                    "repeats_config": self.roll_table.repeats_config,
-                    "palindromes_config": self.roll_table.palindromes_config
-                },
-                "all_roll_results": self.all_roll_results,
-                "roll_mode": self.roll_mode,
-                "tile_owners": {f"{x},{y}": owner for (x, y), owner in self.tile_owners.items()}
-            }
-            try:
-                with open(file_path, 'w') as f:
-                    json.dump(game_data, f)
-                messagebox.showinfo("Game Saved", "Game has been saved successfully.")
-            except Exception as e:
-                messagebox.showerror("Error Saving Game", f"An error occurred while saving the game:\n{e}")
-                
+        from pyRisk.save_load_manager import SaveLoadManager
+        SaveLoadManager.save_game(self)
+
     def load_game(self):
-        file_path = filedialog.askopenfilename(filetypes=[("MSPaint Risk Game files", "*.mprg")])
-        if file_path:
-            try:
-                with open(file_path, 'r') as f:
-                    game_data = json.load(f)
-                self.game_name = game_data.get("game_name", "Untitled Game")
-                self.current_turn = game_data.get("current_turn", 0)
-                self.players = []
-                name_to_player = {}
-                for pdata in game_data.get("players", []):
-                    player = Player(pdata["name"], pdata["color"], pdata.get("faction"))
-                    self.players.append(player)
-                    name_to_player[player.name] = player
-                for pdata, player in zip(game_data.get("players", []), self.players):
-                    player.allies = [name_to_player[name] for name in pdata.get("allies", []) if name in name_to_player]
-                    player.naps = [name_to_player[name] for name in pdata.get("naps", []) if name in name_to_player]
-                self.game_states = []
-                for path in game_data.get("game_states", []):
-                    turn_number = int(os.path.splitext(os.path.basename(path))[0].split('_')[-1])
-                    state = GameState(turn_number, path)
-                    self.game_states.append(state)
-                if self.game_states:
-                    last_state = self.game_states[-1]
-                    self.map_image = Image.open(last_state.map_image_path).convert("RGBA")
-                    self.map_draw = ImageDraw.Draw(self.map_image)
-                    self.original_map_image = self.map_image.copy()
-                    if isinstance(self.current_screen, GameScreen):
-                        self.current_screen.display_map_image()
-                    else:
-                        self.show_game_screen()
-                roll_table_data = game_data.get("roll_table", {})
-                if roll_table_data:
-                    self.roll_table.number_values = roll_table_data.get("number_values", self.roll_table.number_values)
-                    self.roll_table.repeats_config = roll_table_data.get("repeats_config", self.roll_table.repeats_config)
-                    self.roll_table.palindromes_config = game_data.get("roll_table", {}).get("palindromes_config",
-                                                                                             self.roll_table.palindromes_config)
-                self.all_roll_results = game_data.get("all_roll_results", [])
-                self.roll_mode = game_data.get("roll_mode", "application")
-                # Load tile ownership
-                tile_owners_data = game_data.get("tile_owners", {})
-                self.tile_owners = {}
-                for pos_str, owner in tile_owners_data.items():
-                    x, y = map(int, pos_str.split(','))
-                    self.tile_owners[(x, y)] = owner
-                messagebox.showinfo("Game Loaded", "Game has been loaded successfully.")
-            except Exception as e:
-                messagebox.showerror("Error Loading Game", f"An error occurred while loading the game:\n{e}")
-
-
+        from pyRisk.save_load_manager import SaveLoadManager
+        SaveLoadManager.load_game(self)
 
     def export_map(self):
             if self.map_image is None:
@@ -536,13 +511,46 @@ class MSPaintRiskEditor:
         self.master.quit()
 
     def cleanup(self):
+        """Clean up temporary files and release memory resources"""
+        # Clean up temporary files
         for filename in os.listdir(self.temp_dir):
             file_path = os.path.join(self.temp_dir, filename)
             try:
                 if os.path.isfile(file_path):
                     os.unlink(file_path)
             except Exception as e:
-                print(e)
+                print(f"Error deleting {file_path}: {e}")
+        
+        # Clear image caches
+        self.clear_image_caches()
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+    
+    def clear_image_caches(self):
+        """Clear all image caches to free up memory"""
+        # Clear main image references
+        if hasattr(self, 'map_photo') and self.map_photo:
+            self.map_photo = None
+        
+        # Clear original map image if it exists
+        if hasattr(self, 'original_map_image') and self.original_map_image:
+            self.original_map_image = None
+        
+        # Clear map history
+        self.map_history.clear()
+        
+        # Clear screen caches if they exist
+        if self.current_screen and hasattr(self.current_screen, '_cached_base_image'):
+            self.current_screen._cached_base_image = None
+            
+        # Clear any cached images in placed sprites
+        if hasattr(self, 'placed_sprites'):
+            for sprite_info in self.placed_sprites.values():
+                if hasattr(sprite_info, 'extra_data') and sprite_info.extra_data:
+                    if 'colored_sprite' in sprite_info.extra_data:
+                        sprite_info.extra_data['colored_sprite'] = None
 
     def validate_player_data(self, name, color, faction):
         """
@@ -584,6 +592,178 @@ class MSPaintRiskEditor:
 
         return name, color, faction
 
+    def load_default_map(self):
+        """Load the default map_cut.png from sprites folder with optimized performance"""
+        import traceback
+        import os
+        
+        try:
+            # Construct path to map_cut.png in sprites folder
+            file_path = os.path.join("sprites", "map_cut.png")
+            
+            if not os.path.exists(file_path):
+                print(f"Warning: Default map file not found at {file_path}")
+                return
+            
+            # Check if we already have this map loaded (avoid reloading the same map)
+            if hasattr(self, '_loaded_map_path') and self._loaded_map_path == file_path and self.map_image is not None:
+                print("Map already loaded, skipping reload")
+                return
+                
+            # Load image
+            img = Image.open(file_path)
+            
+            # Clear any existing image caches
+            self.clear_image_caches()
+            
+            # Convert image to RGBA
+            self.map_image = img.convert("RGBA")
+            self.map_draw = ImageDraw.Draw(self.map_image)
+            self.original_map_image = self.map_image.copy()
+            self.tile_owners = {}
+            
+            # Store the loaded map path
+            self._loaded_map_path = file_path
+            
+            # Scan for resource tiles
+            self.scan_for_resource_tiles()
+            
+            # Show game screen
+            self.show_game_screen()
+            
+            # Save initial map state
+            self.save_current_map_state()
+            self.map_history.clear()
+                
+        except Exception as e:
+            # Only create error log when an actual error occurs
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file = f"error_log_{timestamp}.txt"
+            
+            # Log the full error details
+            with open(log_file, 'w') as f:
+                f.write("\nERROR OCCURRED DURING DEFAULT MAP LOAD:\n")
+                f.write(f"Error type: {type(e).__name__}\n")
+                f.write(f"Error message: {str(e)}\n")
+                f.write(f"Map file: {file_path if 'file_path' in locals() else 'Unknown'}\n\n")
+                f.write("Full stack trace:\n")
+                traceback.print_exc(file=f)
+                
+                # Log additional state information
+                f.write("\nApplication State:\n")
+                f.write(f"Roll mode: {self.roll_mode}\n")
+                f.write(f"Current turn: {self.current_turn}\n")
+                f.write(f"Number of players: {len(self.players)}\n")
+                f.write(f"Map image exists: {self.map_image is not None}\n")
+                if hasattr(self, 'current_screen'):
+                    f.write(f"Current screen type: {type(self.current_screen).__name__}\n")
+            
+            print(f"Error loading default map: {str(e)}")
+            print(f"Check {log_file} for full error details.")
+
+    def toggle_memory_monitoring(self):
+        """Toggle memory usage monitoring"""
+        self.memory_monitoring = not self.memory_monitoring
+        
+        if self.memory_monitoring:
+            # Start memory monitoring
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.memory_log_file = f"memory_log_{timestamp}.txt"
+            
+            with open(self.memory_log_file, 'w') as f:
+                f.write("Memory Monitoring Started\n")
+                f.write(f"Timestamp: {timestamp}\n\n")
+                f.write("Time,Total Memory (MB),Available Memory (MB),Used Memory (MB),Action\n")
+            
+            # Schedule periodic memory logging
+            self.log_memory_usage("Memory monitoring started")
+            self.master.after(10000, self.periodic_memory_log)
+            
+            messagebox.showinfo("Memory Monitoring", "Memory monitoring has been enabled.")
+        else:
+            # Stop memory monitoring
+            if self.memory_log_file:
+                with open(self.memory_log_file, 'a') as f:
+                    f.write("\nMemory Monitoring Stopped\n")
+                self.memory_log_file = None
+            messagebox.showinfo("Memory Monitoring", "Memory monitoring has been disabled.")
+    
+    def periodic_memory_log(self):
+        """Log memory usage periodically"""
+        if self.memory_monitoring:
+            self.log_memory_usage("Periodic check")
+            self.master.after(10000, self.periodic_memory_log)
+    
+    def log_memory_usage(self, action=""):
+        """Log current memory usage to file"""
+        if not self.memory_log_file:
+            return
+            
+        try:
+            import psutil
+            import datetime
+            
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            
+            # Get system memory info
+            system_memory = psutil.virtual_memory()
+            
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            with open(self.memory_log_file, 'a') as f:
+                f.write(f"{timestamp},{system_memory.total/1024/1024:.2f},{system_memory.available/1024/1024:.2f},{memory_info.rss/1024/1024:.2f},{action}\n")
+        except ImportError:
+            print("psutil module not available for memory monitoring")
+        except Exception as e:
+            print(f"Error logging memory usage: {e}")
+    
+    def print_memory_usage(self):
+        """Display current memory usage in a message box"""
+        try:
+            import psutil
+            
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            
+            # Get system memory info
+            system_memory = psutil.virtual_memory()
+            
+            message = f"Process Memory Usage: {memory_info.rss/1024/1024:.2f} MB\n"
+            message += f"System Memory: {system_memory.total/1024/1024:.2f} MB total, {system_memory.available/1024/1024:.2f} MB available"
+            
+            messagebox.showinfo("Memory Usage", message)
+            
+            # Log this check
+            self.log_memory_usage("Manual memory check")
+        except ImportError:
+            messagebox.showwarning("Memory Usage", "psutil module not available for memory monitoring")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error getting memory usage: {e}")
+
+    def clear_all_territory(self):
+        """Clear all territory ownership from the map"""
+        if not self.map_image:
+            messagebox.showinfo("No Map", "No map is currently loaded.")
+            return
+            
+        # Confirm with user
+        if not messagebox.askyesno("Clear Territory", "Are you sure you want to clear all territory ownership?"):
+            return
+            
+        # Clear tile owners
+        self.tile_owners.clear()
+        
+        # Log this action if memory monitoring is enabled
+        self.log_memory_usage("Cleared all territory")
+        
+        # Update the display
+        if self.current_screen and hasattr(self.current_screen, 'display_map_image'):
+            self.current_screen.display_map_image()
+            
+        messagebox.showinfo("Territory Cleared", "All territory ownership has been cleared.")
 
 def main():
     root = tk.Tk()

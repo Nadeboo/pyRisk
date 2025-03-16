@@ -58,17 +58,8 @@ class UnitsScreen:
             list_frame = tk.Frame(main_frame)
             list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             
-            # Right side: Special Properties
-            properties_frame = tk.Frame(main_frame)
-            properties_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
-            tk.Label(properties_frame, text="Special Properties", font=("Arial", 12, "bold")).pack(pady=(0, 10))
-            
-            # Special properties checkboxes will be created dynamically
-            self.properties_vars = {}
-            self.properties_frame = properties_frame
-            
             # Create and configure the Treeview
-            columns = ('ID', 'Owner', 'Units', 'Move', 'Attack', 'Casualty', 'Wall', 'Wall Bonus')
+            columns = ('ID', 'Owner', 'Units', 'Move', 'Attack', 'Casualty', 'Wall', 'Wall Bonus', 'Special Properties')
             self.tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=15)
             
             # Configure row height to accommodate multiple lines
@@ -84,7 +75,8 @@ class UnitsScreen:
                 'Attack': 100,
                 'Casualty': 100,
                 'Wall': 100,
-                'Wall Bonus': 100
+                'Wall Bonus': 100,
+                'Special Properties': 150
             }
             
             for col in columns:
@@ -104,62 +96,101 @@ class UnitsScreen:
             # Bind tree selection to update special properties
             self.tree.bind('<<TreeviewSelect>>', self.on_army_select)
             
-            # Bind mouse events for drag and drop
+            # Bind mouse events for drag and drop and special properties editing
             self.tree.bind('<Button-3>', self.show_unit_popup)
             self.tree.bind('<ButtonPress-1>', self.on_drag_start)
             self.tree.bind('<B1-Motion>', self.on_drag_motion)
             self.tree.bind('<ButtonRelease-1>', self.on_drag_release)
+            self.tree.bind('<Double-1>', self.on_double_click)
             
             self.dragged_item = None
             self.update_army_list()
 
-    def on_army_select(self, event):
-        """Update special properties when an army is selected"""
-        selection = self.tree.selection()
-        if not selection:
-            # Clear and disable all properties
-            for var in self.properties_vars.values():
-                var.set(False)
+    def on_double_click(self, event):
+        """Handle double-click on a cell, specifically for special properties"""
+        region = self.tree.identify_region(event.x, event.y)
+        if region != "cell":
             return
             
-        # Get the selected army
-        army_id = int(self.tree.item(selection[0])['values'][0])
-        army = next((u for u in self.app.units if u.unit_id == army_id), None)
+        column = self.tree.identify_column(event.x)
+        column_index = int(column[1:]) - 1  # Convert #9 to 8 (0-indexed)
         
-        if not army:
-            return
-            
-        # Update available properties
-        self.update_special_properties(army)
+        # Check if the Special Properties column was clicked (column index 8)
+        if column_index == 8:
+            item = self.tree.identify_row(event.y)
+            if item:
+                army_id = int(self.tree.item(item)['values'][0])
+                army = next((u for u in self.app.units if u.unit_id == army_id), None)
+                if army:
+                    self.show_properties_dialog(army)
 
-    def update_special_properties(self, army):
-        """Update the special properties checkboxes for the selected army"""
-        # Clear existing checkboxes
-        for widget in self.properties_frame.winfo_children():
-            if isinstance(widget, tk.Checkbutton):
-                widget.destroy()
-        self.properties_vars.clear()
+    def show_properties_dialog(self, army):
+        """Show a dialog to edit special properties for the army"""
+        dialog = tk.Toplevel(self.frame)
+        dialog.title(f"Special Properties for Army #{army.unit_id}")
+        dialog.geometry("300x300")
+        dialog.transient(self.frame)
+        dialog.grab_set()
+        
+        # Create a frame for the checkboxes
+        props_frame = tk.Frame(dialog)
+        props_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Add a label
+        tk.Label(props_frame, text="Available Special Properties", font=("Arial", 12, "bold")).pack(pady=(0, 10))
         
         # Add checkboxes for available properties
+        checkbox_vars = {}
         available_properties = army.available_special_properties
+        
+        if not available_properties:
+            tk.Label(props_frame, text="No special properties available").pack(pady=10)
+        
         for prop in available_properties:
             var = tk.BooleanVar(value=prop in army.special_properties)
-            self.properties_vars[prop] = var
+            checkbox_vars[prop] = var
             
             cb = tk.Checkbutton(
-                self.properties_frame,
+                props_frame,
                 text=prop.title(),
-                variable=var,
-                command=lambda a=army, p=prop: self.toggle_property(a, p)
+                variable=var
             )
             cb.pack(anchor=tk.W, pady=2)
+        
+        # Add buttons
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        def save_properties():
+            # Update the army's special properties
+            for prop, var in checkbox_vars.items():
+                if var.get():
+                    army.special_properties.add(prop)
+                else:
+                    army.special_properties.discard(prop)
+            
+            # Update the display
+            self.update_army_list()
+            dialog.destroy()
+        
+        tk.Button(button_frame, text="Save", command=save_properties).pack(side=tk.RIGHT, padx=5)
+        tk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+
+    def on_army_select(self, event):
+        """Update special properties when an army is selected"""
+        # This method is kept for backward compatibility but no longer updates checkboxes
+        pass
+
+    def update_special_properties(self, army):
+        """This method is kept for backward compatibility but is no longer used"""
+        pass
 
     def toggle_property(self, army, property_name):
         """Toggle a special property for an army"""
-        if self.properties_vars[property_name].get():
-            army.special_properties.add(property_name)
-        else:
+        if property_name in army.special_properties:
             army.special_properties.discard(property_name)
+        else:
+            army.special_properties.add(property_name)
         
         # Update the display to show new dice values
         self.update_army_list()
@@ -220,7 +251,8 @@ class UnitsScreen:
         army = Unit(
             owner=owner,
             unit_type=UnitType.INFANTRY,  # Default type, doesn't matter for armies
-            unit_id=self.app.next_unit_id
+            unit_id=self.app.next_unit_id,
+            position=None  # No position - must be placed on map manually
         )
         
         # Add to app's units list
@@ -252,76 +284,68 @@ class UnitsScreen:
                 command=lambda t=unit_type: self.add_unit_to_army(army, t)
             )
             
-        # Add separator and unit management submenu
+        # Add separator
         popup.add_separator()
         
-        # Create submenu for managing existing units
-        units_menu = tk.Menu(popup, tearoff=0)
-        if army.sub_units:
-            for unit in army.sub_units:
-                units_menu.add_command(
-                    label=f"Remove {unit.unit_type.value} #{unit.unit_id}",
-                    command=lambda u=unit: self.remove_unit_from_army(army, u)
-                )
-        else:
-            units_menu.add_command(label="No units in army", state=tk.DISABLED)
-        
-        popup.add_cascade(label="Remove Unit", menu=units_menu)
-        
-        # Add delete army option
-        popup.add_separator()
+        # Add option to edit special properties
         popup.add_command(
-            label="Delete Entire Army",
+            label="Edit Special Properties",
+            command=lambda: self.show_properties_dialog(army)
+        )
+        
+        # Add option to delete army
+        popup.add_command(
+            label="Delete Army",
             command=lambda: self.delete_army(army)
         )
         
-        # Show the popup menu
+        # Display popup menu
         popup.tk_popup(event.x_root, event.y_root)
 
     def remove_unit_from_army(self, army, unit):
-        """Remove a single unit from an army"""
+        """Remove a unit from an army"""
         if unit in army.sub_units:
             army.sub_units.remove(unit)
-            self.app.units.remove(unit)
             
-            # Update displays
-            self.update_army_list()
-            if not isinstance(self.app.current_screen, type(self)):
-                # If we're in the game screen, refresh the map
-                self.app.current_screen.display_map_image()
+            # If army is now empty, delete it
+            if not army.sub_units:
+                self.delete_army(army)
+            else:
+                self.update_army_list()
 
     def delete_army(self, army):
         """Delete an army and all its units"""
-        if messagebox.askyesno("Confirm Delete", 
-                            f"Are you sure you want to delete this army and all its units?"):
-            # First remove any sub-units from app.units
-            if army.sub_units:
-                # Create a copy of sub_units to avoid modification during iteration
-                for sub_unit in army.sub_units[:]:
-                    # Check if the sub_unit is still in app.units before trying to remove it
-                    if sub_unit in self.app.units:
-                        self.app.units.remove(sub_unit)
-            
-            # Clear the army's sub_units list
-            army.sub_units.clear()
-            
-            # Remove the army itself if it's still in app.units
-            if army in self.app.units:
-                self.app.units.remove(army)
-            
-            # Update displays
-            self.update_army_list()
-            if not isinstance(self.app.current_screen, type(self)):
-                # If we're in the game screen, refresh the map
-                self.app.current_screen.display_map_image()
+        # Confirm deletion
+        if army.is_army:
+            if not messagebox.askyesno(
+                "Confirm Deletion",
+                f"Delete army #{army.unit_id} with {len(army.sub_units)} units?"
+            ):
+                return
+        else:
+            if not messagebox.askyesno(
+                "Confirm Deletion",
+                f"Delete empty army #{army.unit_id}?"
+            ):
+                return
+                
+        # Remove from app's units list
+        self.app.units.remove(army)
+        
+        # Update the display
+        self.update_army_list()
+        
+        # Update the map if we're in game screen
+        if not isinstance(self.app.current_screen, type(self)):
+            self.app.current_screen.display_map_image()
 
     def add_unit_to_army(self, army, unit_type):
-        """Add a new unit to the specified army"""
+        """Add a unit to an army"""
         unit = Unit(
             owner=army.owner,
             unit_type=unit_type,
             unit_id=self.app.next_unit_id,
-            position=army.position  # New unit inherits army's position
+            position=None
         )
         
         army.sub_units.append(unit)
@@ -345,6 +369,25 @@ class UnitsScreen:
         # Now only display units that aren't sub-units
         for unit in self.app.units:
             if unit.unit_id not in all_sub_units:
+                # Format special properties
+                active_props = []
+                if unit.is_army:
+                    # For armies, show which units have which properties
+                    unit_props = {}
+                    for sub_unit in unit.sub_units:
+                        for prop in sub_unit.special_properties:
+                            if prop not in unit_props:
+                                unit_props[prop] = []
+                            unit_props[prop].append(sub_unit.unit_id)
+                    
+                    for prop, unit_ids in unit_props.items():
+                        active_props.append(f"{prop.title()}")
+                else:
+                    # For individual units, just show the properties
+                    active_props = [prop.title() for prop in unit.special_properties]
+                
+                special_props_text = ", ".join(active_props) if active_props else "None"
+                
                 self.tree.insert('', 'end', values=(
                     unit.unit_id,
                     unit.owner,
@@ -353,7 +396,8 @@ class UnitsScreen:
                     unit.attack_dice,
                     unit.casualty_dice,
                     unit.wall_dice,
-                    f"+{unit.wall_bonus}" if unit.wall_bonus > 0 else unit.wall_bonus
+                    f"+{unit.wall_bonus}" if unit.wall_bonus > 0 else unit.wall_bonus,
+                    special_props_text
                 ))
 
     def destroy(self):

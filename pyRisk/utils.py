@@ -10,20 +10,28 @@ def color_distance(color1, color2):
     return sum((a - b) ** 2 for a, b in zip(c1, c2)) ** 0.5
 
 def find_connected_region(pixels, start_x, start_y, target_color, width, height, tolerance=5):
-    """Find a connected region of similar colors starting from a point"""
-    if start_x < 0 or start_x >= width or start_y >= height:
+    """Find a connected region of similar colors starting from a point using an iterative approach"""
+    if start_x < 0 or start_x >= width or start_y < 0 or start_y >= height:
         return set()
         
     visited = {(start_x, start_y)}
     stack = [(start_x, start_y)]
     region = {(start_x, start_y)}
     
+    # Pre-compute the valid coordinate ranges for faster boundary checking
+    x_range = range(width)
+    y_range = range(height)
+    
+    # Convert target color to RGB if it's RGBA
+    if len(target_color) == 4:
+        target_color = target_color[:3]
+    
     while stack:
         x, y = stack.pop()
         
         # Check 4-connected neighbors
         for nx, ny in [(x+1, y), (x-1, y), (x, y+1), (x, y-1)]:
-            if (nx, ny) in visited or nx < 0 or nx >= width or ny < 0 or ny >= height:
+            if (nx, ny) in visited or nx not in x_range or ny not in y_range:
                 continue
                 
             visited.add((nx, ny))
@@ -95,7 +103,7 @@ def check_territory_in_radius(image, tile_owners, center_x, center_y, radius=100
 
 def flood_fill(image, x, y, target_color, replacement_color, tolerance=5):
     """
-    Region-based flood fill algorithm.
+    Region-based flood fill algorithm with optimized performance.
     Returns the region information for territory tracking.
     
     Args:
@@ -115,23 +123,39 @@ def flood_fill(image, x, y, target_color, replacement_color, tolerance=5):
     if x < 0 or x >= width or y < 0 or y >= height:
         return None
 
-    # Find the connected region
+    # Convert colors to RGB tuples for consistent comparison
+    if len(target_color) == 4:
+        target_color = target_color[:3]
+    
+    if len(replacement_color) == 4:
+        replacement_rgb = replacement_color[:3]
+        replacement_alpha = replacement_color[3]
+    else:
+        replacement_rgb = replacement_color
+        replacement_alpha = 255
+    
+    # Use a more efficient data structure for the region
     region = find_connected_region(pixels, x, y, target_color, width, height, tolerance)
     
-    # Color all pixels in the region
-    for px, py in region:
-        pixels[px, py] = replacement_color if len(replacement_color) == 3 else replacement_color[:3]
+    # If no region found, return None
+    if not region:
+        return None
     
-    # Return the region boundary points and its center
-    if region:
-        min_x = min(x for x, _ in region)
-        max_x = max(x for x, _ in region)
-        min_y = min(y for _, y in region)
-        max_y = max(y for _, y in region)
-        center = ((min_x + max_x) // 2, (min_y + max_y) // 2)
-        region_info = {
-            'center': center,
-            'boundary': region
-        }
-        return region_info
-    return None
+    # Batch process all pixels in the region
+    for px, py in region:
+        pixels[px, py] = replacement_rgb if len(replacement_color) == 3 else replacement_rgb
+    
+    # Calculate region statistics more efficiently
+    x_coords = [x for x, _ in region]
+    y_coords = [y for _, y in region]
+    
+    min_x = min(x_coords)
+    max_x = max(x_coords)
+    min_y = min(y_coords)
+    max_y = max(y_coords)
+    center = ((min_x + max_x) // 2, (min_y + max_y) // 2)
+    
+    return {
+        'center': center,
+        'boundary': region
+    }

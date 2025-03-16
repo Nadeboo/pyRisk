@@ -138,10 +138,6 @@ class GameScreen:
                 command=self.toggle_unit_mode
             )
             self.unit_mode_button.pack(pady=5)
-            
-            # Initially disable the button if there are no units
-            if not hasattr(self.app, 'units') or len(self.app.units) == 0:
-                self.unit_mode_button.config(state=tk.DISABLED)
 
         # Player selection section
         self.select_player_label = tk.Label(self.sidebar, text="Select Player:")
@@ -217,11 +213,6 @@ class GameScreen:
 
     def toggle_unit_mode(self):
         """Toggle between unit movement mode and regular map editing mode"""
-        # Check if there are any units to move
-        if not hasattr(self.app, 'units') or len(self.app.units) == 0:
-            messagebox.showinfo("No Units", "There are no units on the map to move. Create units first.")
-            return
-            
         self.unit_mode = not self.unit_mode
         print(f"\n=== Unit Mode Toggled ===")
         print(f"Unit mode is now: {'ON' if self.unit_mode else 'OFF'}")
@@ -651,51 +642,42 @@ class GameScreen:
                         outline='black'
                     )
                     
-                    # Get all active special properties for this unit
-                    active_properties = set()
+                    # Check if unit is immobile (rooted Treant)
+                    from pyRisk.unit import UnitType
+                    is_rooted = False
                     
-                    if unit.is_army:
-                        # For armies, collect all special properties from sub-units
+                    # Check if this is a Treant with rooted property
+                    if unit.unit_type == UnitType.TREANT and "rooted" in unit.special_properties:
+                        is_rooted = True
+                    
+                    # Check if this is an army containing a rooted Treant
+                    elif unit.is_army:
                         for sub_unit in unit.sub_units:
-                            active_properties.update(sub_unit.special_properties)
-                    else:
-                        # For individual units
-                        active_properties.update(unit.special_properties)
+                            if sub_unit.unit_type == UnitType.TREANT and "rooted" in unit.special_properties:
+                                is_rooted = True
+                                break
                     
-                    # Display special property indicators
-                    if active_properties:
-                        # Position for the first indicator
-                        indicator_x = x + 25
-                        indicator_y = y
-                        
-                        # Define colors and symbols for different properties
-                        property_indicators = {
-                            "rooted": ("🔒", "#8B4513"),  # Lock symbol, brown color
-                            "phalanx": ("🛡️", "#4682B4")   # Shield symbol, steel blue color
-                        }
-                        
-                        # Draw indicators for each active property
-                        for prop in active_properties:
-                            if prop in property_indicators:
-                                symbol, color = property_indicators[prop]
-                                
-                                # Draw a colored circle as background
-                                self.canvas.create_oval(
-                                    indicator_x, indicator_y,
-                                    indicator_x + 16, indicator_y + 16,
-                                    fill=color, outline='black'
-                                )
-                                
-                                # Draw the property symbol
-                                self.canvas.create_text(
-                                    indicator_x + 8, indicator_y + 8,
-                                    text=symbol,
-                                    fill='white',
-                                    font=('Arial', int(10 * self.zoom_level))
-                                )
-                                
-                                # Move to the next indicator position
-                                indicator_y += 18
+                    # If unit is rooted, draw a lock symbol
+                    if is_rooted:
+                        # Draw lock body (small rectangle)
+                        lock_x, lock_y = x + 15, y - 8
+                        draw.rectangle(
+                            [lock_x - 4, lock_y, lock_x + 4, lock_y + 8],
+                            fill=(150, 150, 150),
+                            outline='black'
+                        )
+                        # Draw lock shackle (arc above the rectangle)
+                        draw.arc(
+                            [lock_x - 6, lock_y - 6, lock_x + 6, lock_y + 2],
+                            180, 0,
+                            fill='black',
+                            width=2
+                        )
+                        # Draw keyhole
+                        draw.ellipse(
+                            [lock_x - 1, lock_y + 3, lock_x + 1, lock_y + 5],
+                            fill='black'
+                        )
         
         # Get cities for the overlay
         cities = [sprite_info for sprite_info in self.sprite_manager.placed_sprites.values() 
@@ -714,7 +696,6 @@ class GameScreen:
             new_size = (
                 int(round(display_image.width * self.zoom_level)),
                 int(round(display_image.height * self.zoom_level))
-            )
             resampling = Image.Resampling.LANCZOS if self.zoom_level > 1.0 else Image.Resampling.BILINEAR
             display_image = display_image.resize(new_size, resampling)
 
@@ -796,52 +777,6 @@ class GameScreen:
                     fill='#{:02x}{:02x}{:02x}'.format(*owner_color),
                     outline='black'
                 )
-                
-                # Get all active special properties for this unit
-                active_properties = set()
-                
-                if unit.is_army:
-                    # For armies, collect all special properties from sub-units
-                    for sub_unit in unit.sub_units:
-                        active_properties.update(sub_unit.special_properties)
-                else:
-                    # For individual units
-                    active_properties.update(unit.special_properties)
-                
-                # Display special property indicators
-                if active_properties:
-                    # Position for the first indicator
-                    indicator_x = x + 25
-                    indicator_y = y
-                    
-                    # Define colors and symbols for different properties
-                    property_indicators = {
-                        "rooted": ("🔒", "#8B4513"),  # Lock symbol, brown color
-                        "phalanx": ("🛡️", "#4682B4")   # Shield symbol, steel blue color
-                    }
-                    
-                    # Draw indicators for each active property
-                    for prop in active_properties:
-                        if prop in property_indicators:
-                            symbol, color = property_indicators[prop]
-                            
-                            # Draw a colored circle as background
-                            self.canvas.create_oval(
-                                indicator_x, indicator_y,
-                                indicator_x + 16, indicator_y + 16,
-                                fill=color, outline='black'
-                            )
-                            
-                            # Draw the property symbol
-                            self.canvas.create_text(
-                                indicator_x + 8, indicator_y + 8,
-                                text=symbol,
-                                fill='white',
-                                font=('Arial', int(10 * self.zoom_level))
-                            )
-                            
-                            # Move to the next indicator position
-                            indicator_y += 18
 
     def update_player_buttons(self):
         for widget in self.sidebar.winfo_children():
@@ -960,7 +895,7 @@ class GameScreen:
         # Handle unit movement if in unit mode
         if self.app.roll_mode == 'tregonia' and self.unit_mode:
             self.handle_unit_placement(x, y)
-            return  # Important: return here to prevent other handlers from running
+            return
 
         # Check if click is within image bounds
         if x < 0 or y < 0 or x >= self.app.map_image.width or y >= self.app.map_image.height:
@@ -999,7 +934,7 @@ class GameScreen:
             # Check if this is an army containing a rooted Treant
             elif self.selected_unit.is_army:
                 for sub_unit in self.selected_unit.sub_units:
-                    if sub_unit.unit_type == UnitType.TREANT and "rooted" in sub_unit.special_properties:
+                    if sub_unit.unit_type == UnitType.TREANT and "rooted" in self.selected_unit.special_properties:
                         is_rooted = True
                         break
             
@@ -1049,10 +984,6 @@ class GameScreen:
             print("All units:")
             for unit in self.app.units:
                 print(f"  Unit {unit.unit_id}: position={unit.position}, owner={unit.owner}, type={unit.unit_type}")
-            
-            # Do NOT create a new army here - just inform the user that no unit was found
-            # This is the fix for the issue where a new army is created when clicking in an empty area
-            messagebox.showinfo("No Unit Found", "No unit found at this position. Please click on an existing unit to move it.")
 
     def handle_map_coloring(self, x, y):
         """Handle map coloring using region-based approach"""
@@ -1264,32 +1195,25 @@ class GameScreen:
             self.update_resource_ownership()
 
     def on_next_turn(self):
-        """Handle next turn button click"""
-        if self.app.map_image is None:
-            messagebox.showwarning("No Map Loaded", "Please import a map before proceeding to the next turn.")
-            return
+            """Handle next turn button click"""
+            if self.app.map_image is None:
+                messagebox.showwarning("No Map Loaded", "Please import a map before proceeding to the next turn.")
+                return
                 
-        # Apply resource increases for all players
-        for player in self.app.players:
-            player.apply_turn_increases()
+            # Apply resource increases for all players
+            for player in self.app.players:
+                player.apply_turn_increases()
                 
-        self.app.current_turn += 1
-        self.app.save_current_map_state()
-        self.app.map_history.clear()
-        if self.app.roll_mode != 'external':
-            self.app.player_rolls.clear()
+            self.app.current_turn += 1
+            self.app.save_current_map_state()
+            self.app.map_history.clear()
+            if self.app.roll_mode != 'external':
+                self.app.player_rolls.clear()
                 
-        self.turn_label.config(text=f"Turn: {self.app.current_turn}")
-        if hasattr(self.app.current_screen, 'update_player_list'):
-            self.app.current_screen.update_player_list()
-        self.update_player_buttons()
-        
-        # Update unit move button state
-        if hasattr(self, 'unit_mode_button'):
-            if not hasattr(self.app, 'units') or len(self.app.units) == 0:
-                self.unit_mode_button.config(state=tk.DISABLED)
-            else:
-                self.unit_mode_button.config(state=tk.NORMAL)
+            self.turn_label.config(text=f"Turn: {self.app.current_turn}")
+            if hasattr(self.app.current_screen, 'update_player_list'):
+                self.app.current_screen.update_player_list()
+            self.update_player_buttons()
 
     def destroy(self):
         self.canvas.unbind("<Button-1>")
@@ -1300,7 +1224,7 @@ class GameScreen:
         self.frame.destroy()
 
     def place_army_at_position(self, player, position):
-        """Place an existing army or create a new one for the specified player at the given position.
+        """Create a new army for the specified player at the given position.
         
         Args:
             player: The Player object who will own the army
@@ -1308,140 +1232,22 @@ class GameScreen:
         """
         from pyRisk.unit import Unit, UnitType
         
-        # Check if there's already an army at this position
-        x, y = position
-        existing_army_at_position = None
-        for unit in self.app.units:
-            if unit.position:
-                unit_x, unit_y = unit.position
-                # Define a radius for checking (20 pixels)
-                if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
-                    existing_army_at_position = unit
-                    break
+        print(f"Creating new army for {player.name} at position {position}")
         
-        # If there's already an army at this position, don't place another one
-        if existing_army_at_position:
-            print(f"Army already exists at position {position} (Unit #{existing_army_at_position.unit_id})")
-            messagebox.showinfo("Army Exists", f"An army (#{existing_army_at_position.unit_id}) already exists at this position.")
-            return
+        # Create army as a special unit that will contain sub-units
+        army = Unit(
+            owner=player.name,
+            unit_type=UnitType.INFANTRY,  # Default type, doesn't matter for armies
+            unit_id=self.app.next_unit_id,
+            position=position  # Set the position to the clicked location
+        )
         
-        # Find unplaced armies for this player
-        unplaced_armies = [unit for unit in self.app.units 
-                          if unit.owner == player.name and unit.position is None]
-        
-        # If there are unplaced armies, let the user select one to place
-        selected_army = None
-        if unplaced_armies:
-            # If there's only one unplaced army, use it
-            if len(unplaced_armies) == 1:
-                selected_army = unplaced_armies[0]
-                print(f"Placing existing army #{selected_army.unit_id} for {player.name} at position {position}")
-            else:
-                # If there are multiple unplaced armies, show a dialog to select one
-                options = []
-                for army in unplaced_armies:
-                    # Include information about sub-units if any
-                    sub_units_info = ""
-                    if hasattr(army, 'sub_units') and army.sub_units:
-                        sub_units_info = f" ({len(army.sub_units)} units)"
-                    options.append(f"Army #{army.unit_id}{sub_units_info}")
-                options.append("Create new army")
-                
-                # Create a simple dialog to select an option
-                from tkinter import simpledialog
-                message = f"Select an army to place for {player.name}:"
-                title = "Select Army"
-                
-                # Show a dialog with radio buttons for each option
-                dialog = tk.Toplevel(self.parent)
-                dialog.title(title)
-                dialog.transient(self.parent)
-                dialog.grab_set()
-                dialog.resizable(False, False)
-                
-                tk.Label(dialog, text=message, justify=tk.LEFT).pack(padx=20, pady=10)
-                
-                var = tk.StringVar(dialog)
-                var.set(options[0])  # Default to first option
-                
-                for option in options:
-                    tk.Radiobutton(dialog, text=option, variable=var, value=option).pack(anchor=tk.W, padx=20)
-                
-                # Add OK and Cancel buttons
-                button_frame = tk.Frame(dialog)
-                button_frame.pack(pady=10)
-                
-                result = {"value": None}
-                
-                def on_ok():
-                    result["value"] = var.get()
-                    dialog.destroy()
-                
-                def on_cancel():
-                    dialog.destroy()
-                
-                tk.Button(button_frame, text="OK", command=on_ok, width=10).pack(side=tk.LEFT, padx=10)
-                tk.Button(button_frame, text="Cancel", command=on_cancel, width=10).pack(side=tk.LEFT, padx=10)
-                
-                # Center the dialog
-                dialog.update_idletasks()
-                width = dialog.winfo_width()
-                height = dialog.winfo_height()
-                x = (dialog.winfo_screenwidth() // 2) - (width // 2)
-                y = (dialog.winfo_screenheight() // 2) - (height // 2)
-                dialog.geometry(f"{width}x{height}+{x}+{y}")
-                
-                # Wait for the dialog to close
-                self.parent.wait_window(dialog)
-                
-                # Process the result
-                if result["value"]:
-                    selected_option = result["value"]
-                    if selected_option == "Create new army":
-                        selected_army = None
-                    else:
-                        # Extract the army ID from the option string
-                        import re
-                        match = re.search(r"Army #(\d+)", selected_option)
-                        if match:
-                            army_id = int(match.group(1))
-                            selected_army = next((a for a in unplaced_armies if a.unit_id == army_id), None)
-                            if selected_army:
-                                print(f"Placing existing army #{selected_army.unit_id} for {player.name} at position {position}")
-                else:
-                    # User cancelled
-                    return
-        
-        # If no existing army was selected, create a new one
-        if selected_army is None:
-            print(f"Creating new army for {player.name} at position {position}")
-            
-            # Create army as a special unit that will contain sub-units
-            selected_army = Unit(
-                owner=player.name,
-                unit_type=UnitType.INFANTRY,  # Default type, doesn't matter for armies
-                unit_id=self.app.next_unit_id,
-                position=None  # Will set position below
-            )
-            
-            # Add to app's units list
-            self.app.units.append(selected_army)
-            self.app.next_unit_id += 1
-        
-        # Set the position of the selected army
-        selected_army.position = position
-        
-        # If this is an army with sub-units, update their positions too
-        if hasattr(selected_army, 'sub_units') and selected_army.sub_units:
-            for sub_unit in selected_army.sub_units:
-                sub_unit.position = position
+        # Add to app's units list
+        self.app.units.append(army)
+        self.app.next_unit_id += 1
         
         # Update the display
         self.display_map_image()
-        
-        # Enable the unit move mode button if it was disabled
-        if hasattr(self, 'unit_mode_button') and self.unit_mode_button['state'] == tk.DISABLED:
-            self.unit_mode_button.config(state=tk.NORMAL)
 
     def show_unit_popup(self, event, clicked_unit):
         """Show a popup menu for managing a unit when right-clicked on the map.
@@ -1462,32 +1268,11 @@ class GameScreen:
         # Add separator
         popup.add_separator()
         
-        # Check if unit is rooted
-        from pyRisk.unit import UnitType
-        is_rooted = False
-        
-        # Check if this is a Treant with rooted property
-        if clicked_unit.unit_type == UnitType.TREANT and "rooted" in clicked_unit.special_properties:
-            is_rooted = True
-        
-        # Check if this is an army containing a rooted Treant
-        elif clicked_unit.is_army:
-            for sub_unit in clicked_unit.sub_units:
-                if sub_unit.unit_type == UnitType.TREANT and "rooted" in sub_unit.special_properties:
-                    is_rooted = True
-                    break
-        
-        # Add option to move the unit (disabled if rooted)
-        if is_rooted:
-            popup.add_command(
-                label="Move Unit (Rooted)",
-                state=tk.DISABLED
-            )
-        else:
-            popup.add_command(
-                label="Move Unit",
-                command=lambda: self.start_unit_movement(clicked_unit)
-            )
+        # Add option to move the unit
+        popup.add_command(
+            label="Move Unit",
+            command=lambda: self.start_unit_movement(clicked_unit)
+        )
         
         # Add option to view unit details
         popup.add_command(
@@ -1496,35 +1281,15 @@ class GameScreen:
         )
         
         # Add special options for Treants
-        has_treant = clicked_unit.unit_type == UnitType.TREANT
-        treant_sub_units = []
-        
-        if clicked_unit.is_army:
-            for sub_unit in clicked_unit.sub_units:
-                if sub_unit.unit_type == UnitType.TREANT:
-                    has_treant = True
-                    treant_sub_units.append(sub_unit)
-        
-        if has_treant:
-            # If it's a single Treant
-            if clicked_unit.unit_type == UnitType.TREANT:
-                is_rooted = "rooted" in clicked_unit.special_properties
-                popup.add_command(
-                    label=f"{'Uproot' if is_rooted else 'Take Root'}",
-                    command=lambda: self.toggle_treant_rooted(clicked_unit)
-                )
-            # If it's an army with Treants
-            elif treant_sub_units:
-                # Create a submenu for each Treant
-                treants_menu = tk.Menu(popup, tearoff=0)
-                popup.add_cascade(label="Treant Actions", menu=treants_menu)
-                
-                for treant in treant_sub_units:
-                    is_rooted = "rooted" in treant.special_properties
-                    treants_menu.add_command(
-                        label=f"{'Uproot' if is_rooted else 'Take Root'} Treant #{treant.unit_id}",
-                        command=lambda t=treant: self.toggle_treant_rooted(t)
-                    )
+        from pyRisk.unit import UnitType
+        if clicked_unit.unit_type == UnitType.TREANT or any(
+            unit.unit_type == UnitType.TREANT for unit in clicked_unit.sub_units
+        ):
+            is_rooted = "rooted" in clicked_unit.special_properties
+            popup.add_command(
+                label=f"{'Uproot' if is_rooted else 'Take Root'}",
+                command=lambda: self.toggle_treant_rooted(clicked_unit)
+            )
         
         # Add option to delete the unit
         popup.add_command(
@@ -1556,39 +1321,20 @@ class GameScreen:
         Args:
             unit: The Unit object to show details for
         """
-        from pyRisk.unit import UnitType
-        
         # Build the details message
         details = f"Unit #{unit.unit_id}\n"
         details += f"Owner: {unit.owner}\n"
         details += f"Type: {unit.unit_type.value}\n"
         details += f"Position: {unit.position}\n\n"
         
-        # Check if unit is rooted
-        is_rooted = False
-        if unit.unit_type == UnitType.TREANT and "rooted" in unit.special_properties:
-            is_rooted = True
-            details += "Status: ROOTED (cannot move)\n\n"
-        
         if unit.is_army:
             details += f"Contains {len(unit.sub_units)} units:\n"
-            has_rooted_treant = False
-            
             for sub_unit in unit.sub_units:
-                sub_status = ""
-                if sub_unit.unit_type == UnitType.TREANT and "rooted" in sub_unit.special_properties:
-                    sub_status = " (ROOTED)"
-                    has_rooted_treant = True
-                details += f"- {sub_unit.unit_type.value} #{sub_unit.unit_id}{sub_status}\n"
-            
-            if has_rooted_treant:
-                details += "\nThis army contains a rooted Treant and cannot move.\n\n"
+                details += f"- {sub_unit.unit_type.value} #{sub_unit.unit_id}\n"
         
-        details += f"Movement: {unit.movement_speed}\n"
-        details += f"Attack: {unit.attack_dice}"
-        if unit.unit_type == UnitType.TREANT and "rooted" in unit.special_properties:
-            details += " (+2 when rooted)"
-        details += f"\nCasualty: {unit.casualty_dice}\n"
+        details += f"\nMovement: {unit.movement_speed}\n"
+        details += f"Attack: {unit.attack_dice}\n"
+        details += f"Casualty: {unit.casualty_dice}\n"
         details += f"Wall: {unit.wall_dice}\n"
         details += f"Wall Bonus: +{unit.wall_bonus}" if unit.wall_bonus > 0 else f"Wall Bonus: {unit.wall_bonus}"
         
@@ -1622,17 +1368,6 @@ class GameScreen:
                 
             # Update the display
             self.display_map_image()
-            
-            # Disable the unit move mode button if there are no more units
-            if hasattr(self, 'unit_mode_button') and len(self.app.units) == 0:
-                self.unit_mode_button.config(state=tk.DISABLED)
-                # Also exit unit mode if we're in it
-                if self.unit_mode:
-                    self.unit_mode = False
-                    self.unit_mode_button.config(text="Enter Unit Move Mode")
-                    self.mode_button.config(state=tk.NORMAL)
-                    self.canvas.config(cursor="")
-                    self.selected_unit = None
 
     def toggle_treant_rooted(self, unit):
         """Toggle the rooted state for a Treant unit.
@@ -1640,14 +1375,6 @@ class GameScreen:
         Args:
             unit: The Unit object to toggle rooted state for
         """
-        from pyRisk.unit import UnitType
-        
-        # Verify this is a Treant
-        if unit.unit_type != UnitType.TREANT:
-            messagebox.showinfo("Not a Treant", 
-                              f"Unit #{unit.unit_id} is not a Treant and cannot be rooted.")
-            return
-            
         if "rooted" in unit.special_properties:
             unit.special_properties.remove("rooted")
             messagebox.showinfo("Treant Uprooted", 

@@ -3,14 +3,119 @@ from tkinter import simpledialog, colorchooser, messagebox, filedialog
 from PIL import Image, ImageGrab
 from pyRisk.player import Player
 
+class ResourceTooltip:
+    """Tooltip widget that shows resource source breakdown"""
+    def __init__(self, widget, player, resource_type):
+        self.widget = widget
+        self.player = player
+        self.resource_type = resource_type
+        self.tooltip_window = None
+        
+        # Bind events
+        self.widget.bind("<Enter>", self.show_tooltip)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+        self.widget.bind("<Motion>", self.update_position)
+    
+    def show_tooltip(self, event=None):
+        """Show the tooltip with resource breakdown"""
+        # Get resource sources
+        sources = self.player.get_resource_sources(self.resource_type)
+        if not sources:
+            return
+            
+        # Create tooltip window
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+        
+        # Create a toplevel window
+        self.tooltip_window = tk.Toplevel(self.widget)
+        self.tooltip_window.wm_overrideredirect(True)  # Remove window decorations
+        self.tooltip_window.wm_geometry(f"+{x}+{y}")
+        
+        # Create frame with border
+        frame = tk.Frame(self.tooltip_window, background="#ffffe0", borderwidth=1, relief="solid")
+        frame.pack(fill="both", expand=True)
+        
+        # Add title
+        title = f"{self.resource_type.upper()} Sources"
+        tk.Label(frame, text=title, background="#ffffe0", font=("Courier", 10, "bold")).pack(anchor="w", padx=5, pady=2)
+        
+        # Add separator
+        separator = tk.Frame(frame, height=1, background="black")
+        separator.pack(fill="x", padx=5, pady=2)
+        
+        # Add source breakdown
+        total = 0
+        
+        # Group sources by type
+        base_sources = []
+        race_sources = []
+        tile_sources = []
+        other_sources = []
+        
+        for amount, description in sources:
+            total += amount
+            if "race bonus" in description.lower():
+                race_sources.append((amount, description))
+            elif "base income" in description.lower():
+                base_sources.append((amount, description))
+            elif "tile" in description.lower():
+                tile_sources.append((amount, description))
+            else:
+                other_sources.append((amount, description))
+        
+        # Display base income first
+        for amount, description in base_sources:
+            source_text = f"+{amount}: {description}"
+            tk.Label(frame, text=source_text, background="#ffffe0", font=("Courier", 9)).pack(anchor="w", padx=5, pady=1)
+        
+        # Display race bonuses with highlight
+        if race_sources:
+            race_frame = tk.Frame(frame, background="#ffffc0")  # Slightly different background
+            race_frame.pack(fill="x", padx=2, pady=2)
+            
+            for amount, description in race_sources:
+                source_text = f"+{amount}: {description}"
+                tk.Label(race_frame, text=source_text, background="#ffffc0", font=("Courier", 9, "bold")).pack(anchor="w", padx=5, pady=1)
+        
+        # Display tile sources
+        for amount, description in tile_sources:
+            source_text = f"+{amount}: {description}"
+            tk.Label(frame, text=source_text, background="#ffffe0", font=("Courier", 9)).pack(anchor="w", padx=5, pady=1)
+        
+        # Display other sources
+        for amount, description in other_sources:
+            source_text = f"+{amount}: {description}"
+            tk.Label(frame, text=source_text, background="#ffffe0", font=("Courier", 9)).pack(anchor="w", padx=5, pady=1)
+        
+        # Add total
+        separator = tk.Frame(frame, height=1, background="black")
+        separator.pack(fill="x", padx=5, pady=2)
+        tk.Label(frame, text=f"Total: +{total}/turn", background="#ffffe0", font=("Courier", 10, "bold")).pack(anchor="w", padx=5, pady=2)
+    
+    def hide_tooltip(self, event=None):
+        """Hide the tooltip"""
+        if self.tooltip_window:
+            self.tooltip_window.destroy()
+            self.tooltip_window = None
+    
+    def update_position(self, event=None):
+        """Update tooltip position if mouse moves"""
+        if self.tooltip_window:
+            x, y = event.x_root + 15, event.y_root + 10
+            self.tooltip_window.wm_geometry(f"+{x}+{y}")
+
 class ResourceCounter(tk.Frame):
-    def __init__(self, parent, name, get_value, set_value, get_per_turn, set_per_turn):
+    def __init__(self, parent, name, get_value, set_value, get_per_turn, set_per_turn, player=None):
         super().__init__(parent, bg='white')
         self.name = name
         self.get_value = get_value
         self.set_value = set_value
         self.get_per_turn = get_per_turn
         self.set_per_turn = set_per_turn
+        self.player = player
+        self.resource_type = name.lower()  # Convert name to lowercase for resource type
         
         # Resource name and current value
         name_frame = tk.Frame(self, bg='white')
@@ -29,9 +134,19 @@ class ResourceCounter(tk.Frame):
         # Per turn display (read-only)
         per_turn_frame = tk.Frame(self, bg='white')
         per_turn_frame.pack(fill=tk.X)
-        tk.Label(per_turn_frame, text="/turn:", font=("Courier", 10), bg='white').pack(side=tk.LEFT)
+        per_turn_label_text = tk.Label(per_turn_frame, text="/turn:", font=("Courier", 10), bg='white')
+        per_turn_label_text.pack(side=tk.LEFT)
         self.per_turn_label = tk.Label(per_turn_frame, text="0", font=("Courier", 10), bg='white')
         self.per_turn_label.pack(side=tk.LEFT)
+        
+        # Race bonus indicator
+        self.race_indicator = tk.Label(per_turn_frame, text="", font=("Courier", 10), bg='white', fg='blue')
+        self.race_indicator.pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Add tooltip if player is provided
+        if player:
+            # Create tooltip for the per-turn label
+            self.tooltip = ResourceTooltip(self.per_turn_label, player, self.resource_type)
         
         # Initial update
         self.update_display()
@@ -73,6 +188,26 @@ class ResourceCounter(tk.Frame):
         self.value_label.config(text=str(self.get_value()))
         per_turn = self.get_per_turn()
         self.per_turn_label.config(text=str(per_turn))
+        
+        # Update tooltip color based on value
+        if per_turn > 0:
+            # Make the label more noticeable for positive values
+            self.per_turn_label.config(fg="green", font=("Courier", 10, "bold"))
+        else:
+            # Reset to default for zero or negative values
+            self.per_turn_label.config(fg="black", font=("Courier", 10))
+            
+        # Check if there's a race bonus for this resource
+        if self.player:
+            has_race_bonus = False
+            for amount, description in self.player.get_resource_sources(self.resource_type):
+                if "race bonus" in description.lower():
+                    has_race_bonus = True
+                    self.race_indicator.config(text="(Race)", fg="blue")
+                    break
+            
+            if not has_race_bonus:
+                self.race_indicator.config(text="")
 
 class PlayersScreen:
     def __init__(self, parent, app):
@@ -182,7 +317,7 @@ class PlayersScreen:
         ]
         
         for name, get_val, set_val, get_per_turn, set_per_turn in resources:
-            counter = ResourceCounter(resources_frame, name, get_val, set_val, get_per_turn, set_per_turn)
+            counter = ResourceCounter(resources_frame, name, get_val, set_val, get_per_turn, set_per_turn, player)
             counter.pack(padx=5, pady=2)
             counter.bind('<Button-1>', lambda e, p=player: self.on_player_select(p))
         
@@ -215,6 +350,51 @@ class PlayersScreen:
                               command=lambda p=player, r=race: self.on_race_select(p, r),
                               bg='white')
             cb.pack(side=tk.RIGHT)
+            
+        # Add region bonus counter at the bottom of the race frame
+        region_bonus_frame = tk.Frame(race_frame, bg='white', pady=10)
+        region_bonus_frame.pack(fill=tk.X)
+        
+        # Region bonus label
+        tk.Label(region_bonus_frame, text="REGION BONUS:", font=("Courier", 10, "bold"), bg='white').pack(anchor="w")
+        
+        # Region bonus counter controls
+        region_counter_frame = tk.Frame(region_bonus_frame, bg='white')
+        region_counter_frame.pack(fill=tk.X, pady=5)
+        
+        # Decrement button
+        tk.Button(
+            region_counter_frame, 
+            text="-", 
+            command=lambda p=player: self.adjust_region_bonus(p, -1)
+        ).pack(side=tk.LEFT)
+        
+        # Value display - store in player's attributes
+        region_bonus_label = tk.Label(
+            region_counter_frame, 
+            text=str(player.region_bonus), 
+            width=5, 
+            font=("Courier", 12), 
+            bg='white'
+        )
+        region_bonus_label.pack(side=tk.LEFT)
+        
+        # Store the label reference in the player's attributes dictionary
+        if not hasattr(player, 'ui_elements'):
+            player.ui_elements = {}
+        player.ui_elements['region_bonus_label'] = region_bonus_label
+        
+        # Increment button
+        tk.Button(
+            region_counter_frame, 
+            text="+", 
+            command=lambda p=player: self.adjust_region_bonus(p, 1)
+        ).pack(side=tk.LEFT)
+        
+        # Influence per turn indicator
+        influence_frame = tk.Frame(region_bonus_frame, bg='white')
+        influence_frame.pack(fill=tk.X, pady=2)
+        tk.Label(influence_frame, text="(+1 influence per point)", font=("Courier", 8), fg="blue", bg='white').pack(anchor="w")
 
         # Right side color box
         color_box = tk.Frame(outer_frame, relief=tk.SOLID, bd=2, width=60, height=150)
@@ -291,10 +471,19 @@ class PlayersScreen:
                 var.set(False)
         
         # Update player faction
+        old_faction = player.faction
         if self.race_vars[selected_race].get():
             player.faction = selected_race
         else:
             player.faction = None
+            
+        # If faction changed, update resource calculations
+        if old_faction != player.faction:
+            # Recalculate resource gains
+            self.app.update_player_resources()
+            
+            # Completely rebuild the player list to ensure tooltips are updated
+            self.update_player_list()
 
     def remove_player(self):
         """Remove the selected player"""
@@ -375,3 +564,18 @@ class PlayersScreen:
     def destroy(self):
         self.canvas.unbind_all("<MouseWheel>")  # Remove mousewheel binding
         self.frame.destroy()
+
+    def adjust_region_bonus(self, player, amount):
+        """Adjust the region bonus for a player and update resources"""
+        # Update the region bonus
+        player.region_bonus = max(0, player.region_bonus + amount)
+        
+        # Update the display if the UI element exists
+        if hasattr(player, 'ui_elements') and 'region_bonus_label' in player.ui_elements:
+            player.ui_elements['region_bonus_label'].config(text=str(player.region_bonus))
+        
+        # Recalculate resource gains
+        self.app.update_player_resources()
+        
+        # Update the player boxes to reflect new resource values
+        self.update_player_boxes()

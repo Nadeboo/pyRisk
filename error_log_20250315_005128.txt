@@ -1,9 +1,0 @@
-Starting map import from: C:/Users/glugg/Desktop/New folder (4)/tregonia/map_cut.png
-Current mode: tregonia
-Number of players: 0
-Image loaded successfully.
-Image size: (5000, 2160)
-Image mode: RGBA
-Image converted to RGBA and initialized successfully
-Scanning for resource tiles...
-Map import completed successfully

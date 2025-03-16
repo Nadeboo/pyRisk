@@ -26,6 +26,17 @@ class Player:
         self.research_per_turn = 0
         self.mana_per_turn = 0
         self.influence_per_turn = 0
+        
+        # Region bonus counter
+        self.region_bonus = 0
+        
+        # Resource source tracking
+        self.resource_sources = {
+            'gold': [],
+            'research': [],
+            'mana': [],
+            'influence': []
+        }
 
         # Initialize research manager
         self.research_manager = ResearchManager()
@@ -44,6 +55,22 @@ class Player:
         self.research += self.research_per_turn
         self.mana += self.mana_per_turn
         self.influence += self.influence_per_turn
+        
+    def add_resource_source(self, resource_type, amount, source_description):
+        """Track the source of a resource gain"""
+        if resource_type in self.resource_sources:
+            self.resource_sources[resource_type].append((amount, source_description))
+
+    def clear_resource_sources(self):
+        """Clear all resource source tracking"""
+        for resource_type in self.resource_sources:
+            self.resource_sources[resource_type] = []
+            
+    def get_resource_sources(self, resource_type):
+        """Get the sources for a specific resource type"""
+        if resource_type in self.resource_sources:
+            return self.resource_sources[resource_type]
+        return []
 
     # Research-related methods
     def has_research(self, research_type: ResearchType) -> bool:

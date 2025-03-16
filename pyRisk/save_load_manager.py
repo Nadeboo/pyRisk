@@ -13,21 +13,23 @@ class SaveLoadManager:
     @staticmethod
     def save_game(app):
         """
-        Saves the current game state to a file.
+        Save the current game state to a file.
         
         Args:
-            app: The MSPaintRiskEditor instance
-        """
-        if not app.game_states:
-            messagebox.showwarning("No Game to Save", "No game data to save.")
-            return
+            app: The main application instance.
             
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".mprg",
-            filetypes=[("MSPaint Risk Game files", "*.mprg")]
-        )
-        
-        if file_path:
+        Returns:
+            str: Path to the saved file, or None if save failed.
+        """
+        try:
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".mprg",
+                filetypes=[("MSPaint Risk Game files", "*.mprg")]
+            )
+            
+            if not file_path:
+                return None
+                
             game_data = {
                 # Basic game info
                 "game_name": app.game_name,
@@ -40,7 +42,8 @@ class SaveLoadManager:
                     "color": player.color,
                     "faction": player.faction,
                     "allies": [ally.name for ally in player.allies],
-                    "naps": [nap.name for nap in player.naps]
+                    "naps": [nap.name for nap in player.naps],
+                    "region_bonus": player.region_bonus
                 } for player in app.players],
                 
                 # Game states and map data
@@ -70,12 +73,13 @@ class SaveLoadManager:
                 }
             }
             
-            try:
-                with open(file_path, 'w') as f:
-                    json.dump(game_data, f)
-                messagebox.showinfo("Game Saved", "Game has been saved successfully.")
-            except Exception as e:
-                messagebox.showerror("Error Saving Game", f"An error occurred while saving the game:\n{e}")
+            with open(file_path, 'w') as f:
+                json.dump(game_data, f)
+                
+            return file_path
+        except Exception as e:
+            print(f"Error saving game: {e}")
+            return None
 
     @staticmethod
     def load_game(app):
@@ -106,6 +110,9 @@ class SaveLoadManager:
             name_to_player = {}
             for pdata in game_data.get("players", []):
                 player = Player(pdata["name"], pdata["color"], pdata.get("faction"))
+                # Load region bonus if available
+                if "region_bonus" in pdata:
+                    player.region_bonus = pdata["region_bonus"]
                 app.players.append(player)
                 name_to_player[player.name] = player
             
@@ -191,6 +198,9 @@ class SaveLoadManager:
                 else:
                     app.next_unit_id = 1
             
+            # Finalize the game loading process
+            SaveLoadManager.finalize_game_load(app)
+            
             messagebox.showinfo("Game Loaded", "Game has been loaded successfully.")
             
         except Exception as e:
@@ -199,3 +209,21 @@ class SaveLoadManager:
             # Ensure app is in a valid state even if load fails
             app.next_unit_id = 1
             app.units = []
+
+    @staticmethod
+    def finalize_game_load(app):
+        """
+        Perform final operations after loading a game.
+        
+        Args:
+            app: The MSPaintRiskEditor instance
+        """
+        # Update player resources to recalculate all resource gains
+        app.update_player_resources()
+        
+        # Update UI if needed
+        if hasattr(app, 'current_screen'):
+            if hasattr(app.current_screen, 'update_player_list'):
+                app.current_screen.update_player_list()
+            elif hasattr(app.current_screen, 'update_player_boxes'):
+                app.current_screen.update_player_boxes()

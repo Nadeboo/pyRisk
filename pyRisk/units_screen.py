@@ -165,9 +165,18 @@ class UnitsScreen:
             # Update the army's special properties
             for prop, var in checkbox_vars.items():
                 if var.get():
+                    # Add property to army
                     army.special_properties.add(prop)
+                    # Add property to all relevant sub-units
+                    for sub_unit in army.sub_units:
+                        if prop in sub_unit.unit_type.special_properties:
+                            sub_unit.special_properties.add(prop)
                 else:
+                    # Remove property from army
                     army.special_properties.discard(prop)
+                    # Remove property from all sub-units
+                    for sub_unit in army.sub_units:
+                        sub_unit.special_properties.discard(prop)
             
             # Update the display
             self.update_army_list()

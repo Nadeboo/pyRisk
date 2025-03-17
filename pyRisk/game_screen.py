@@ -12,6 +12,7 @@ from typing import Dict, Optional, Tuple, Any
 from pyRisk.canvas_manager import CanvasManager
 from pyRisk.sidebar_manager import SidebarManager
 from pyRisk.map_interaction_manager import MapInteractionManager
+from pyRisk.unit import UnitType
 
 class GameScreen:
     def __init__(self, parent, app):
@@ -631,10 +632,24 @@ class GameScreen:
                     owner = next((p for p in self.app.players if p.name == unit.owner), None)
                     owner_color = owner.color if owner else (128, 128, 128)
                     
+                    # Draw unit directly on canvas
+                    # Check if unit is rooted
+                    is_rooted = False
+                    if unit.unit_type == UnitType.TREANT and "rooted" in unit.special_properties:
+                        is_rooted = True
+                    elif unit.is_army:
+                        for sub_unit in unit.sub_units:
+                            if sub_unit.unit_type == UnitType.TREANT and "rooted" in sub_unit.special_properties:
+                                is_rooted = True
+                                break
+                    
+                    # Use dark gray for rooted units, white for others
+                    fill_color = (128, 128, 128) if is_rooted else (255, 255, 255)
+                    
                     # Draw unit rectangle
                     draw.rectangle(
                         [x - 3, y - 3, x + 23, y + 23],
-                        fill='white', outline='black'
+                        fill=fill_color, outline='black'
                     )
                     # Draw unit ID
                     draw.text(
@@ -650,52 +665,6 @@ class GameScreen:
                         fill=owner_color,
                         outline='black'
                     )
-                    
-                    # Get all active special properties for this unit
-                    active_properties = set()
-                    
-                    if unit.is_army:
-                        # For armies, collect all special properties from sub-units
-                        for sub_unit in unit.sub_units:
-                            active_properties.update(sub_unit.special_properties)
-                    else:
-                        # For individual units
-                        active_properties.update(unit.special_properties)
-                    
-                    # Display special property indicators
-                    if active_properties:
-                        # Position for the first indicator
-                        indicator_x = x + 25
-                        indicator_y = y
-                        
-                        # Define colors and symbols for different properties
-                        property_indicators = {
-                            "rooted": ("🔒", "#8B4513"),  # Lock symbol, brown color
-                            "phalanx": ("🛡️", "#4682B4")   # Shield symbol, steel blue color
-                        }
-                        
-                        # Draw indicators for each active property
-                        for prop in active_properties:
-                            if prop in property_indicators:
-                                symbol, color = property_indicators[prop]
-                                
-                                # Draw a colored circle as background
-                                self.canvas.create_oval(
-                                    indicator_x, indicator_y,
-                                    indicator_x + 16, indicator_y + 16,
-                                    fill=color, outline='black'
-                                )
-                                
-                                # Draw the property symbol
-                                self.canvas.create_text(
-                                    indicator_x + 8, indicator_y + 8,
-                                    text=symbol,
-                                    fill='white',
-                                    font=('Arial', int(10 * self.zoom_level))
-                                )
-                                
-                                # Move to the next indicator position
-                                indicator_y += 18
         
         # Get cities for the overlay
         cities = [sprite_info for sprite_info in self.sprite_manager.placed_sprites.values() 
@@ -782,66 +751,38 @@ class GameScreen:
                 owner_color = owner.color if owner else (128, 128, 128)
                 
                 # Draw unit directly on canvas
-                self.canvas.create_rectangle(
-                    x - 3, y - 3, x + 23, y + 23,
-                    fill='white', outline='black'
+                # Check if unit is rooted
+                is_rooted = False
+                if unit.unit_type == UnitType.TREANT and "rooted" in unit.special_properties:
+                    is_rooted = True
+                elif unit.is_army:
+                    for sub_unit in unit.sub_units:
+                        if sub_unit.unit_type == UnitType.TREANT and "rooted" in sub_unit.special_properties:
+                            is_rooted = True
+                            break
+                
+                # Use dark gray for rooted units, white for others
+                fill_color = (128, 128, 128) if is_rooted else (255, 255, 255)
+                
+                # Draw unit rectangle
+                draw.rectangle(
+                    [x - 3, y - 3, x + 23, y + 23],
+                    fill=fill_color, outline='black'
                 )
-                self.canvas.create_text(
-                    x + 10, y + 10,
-                    text=str(unit.unit_id),
-                    font=unit_font
+                # Draw unit ID
+                draw.text(
+                    (x + 10, y + 10),
+                    str(unit.unit_id),
+                    font=unit_font,
+                    fill='black',
+                    anchor='mm'
                 )
-                self.canvas.create_rectangle(
-                    x - 3, y + 24, x + 23, y + 28,
-                    fill='#{:02x}{:02x}{:02x}'.format(*owner_color),
+                # Draw owner color bar
+                draw.rectangle(
+                    [x - 3, y + 24, x + 23, y + 28],
+                    fill=owner_color,
                     outline='black'
                 )
-                
-                # Get all active special properties for this unit
-                active_properties = set()
-                
-                if unit.is_army:
-                    # For armies, collect all special properties from sub-units
-                    for sub_unit in unit.sub_units:
-                        active_properties.update(sub_unit.special_properties)
-                else:
-                    # For individual units
-                    active_properties.update(unit.special_properties)
-                
-                # Display special property indicators
-                if active_properties:
-                    # Position for the first indicator
-                    indicator_x = x + 25
-                    indicator_y = y
-                    
-                    # Define colors and symbols for different properties
-                    property_indicators = {
-                        "rooted": ("🔒", "#8B4513"),  # Lock symbol, brown color
-                        "phalanx": ("🛡️", "#4682B4")   # Shield symbol, steel blue color
-                    }
-                    
-                    # Draw indicators for each active property
-                    for prop in active_properties:
-                        if prop in property_indicators:
-                            symbol, color = property_indicators[prop]
-                            
-                            # Draw a colored circle as background
-                            self.canvas.create_oval(
-                                indicator_x, indicator_y,
-                                indicator_x + 16, indicator_y + 16,
-                                fill=color, outline='black'
-                            )
-                            
-                            # Draw the property symbol
-                            self.canvas.create_text(
-                                indicator_x + 8, indicator_y + 8,
-                                text=symbol,
-                                fill='white',
-                                font=('Arial', int(10 * self.zoom_level))
-                            )
-                            
-                            # Move to the next indicator position
-                            indicator_y += 18
 
     def update_player_buttons(self):
         for widget in self.sidebar.winfo_children():

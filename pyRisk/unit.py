@@ -8,6 +8,8 @@ class UnitType(Enum):
     CAVALRY = "Cavalry"
     SPEARMEN = "Spearmen"
     TREANT = "Treant"
+    GRYPHON = "Gryphon"
+    ARTILLERY = "Artillery"
     
     @property
     def movement_speed(self) -> int:
@@ -15,7 +17,9 @@ class UnitType(Enum):
             UnitType.INFANTRY: 8,
             UnitType.CAVALRY: 12,
             UnitType.SPEARMEN: 6,
-            UnitType.TREANT: 8  # Same as Infantry when not rooted
+            UnitType.TREANT: 8,  # Same as Infantry when not rooted
+            UnitType.GRYPHON: 12,  # Same as Cavalry
+            UnitType.ARTILLERY: 8  # Same as Infantry
         }
         return speeds.get(self, 0)
         
@@ -25,7 +29,9 @@ class UnitType(Enum):
             UnitType.INFANTRY: "1d4",
             UnitType.CAVALRY: "1d8",
             UnitType.SPEARMEN: "1d3",
-            UnitType.TREANT: "1d4"  # Same as Infantry when not rooted
+            UnitType.TREANT: "1d4",  # Same as Infantry when not rooted
+            UnitType.GRYPHON: "1d8",  # Same as Cavalry
+            UnitType.ARTILLERY: "2d4"  # Base artillery attack
         }
         return dice.get(self, "")
     
@@ -35,6 +41,8 @@ class UnitType(Enum):
             return {"phalanx"}
         elif self == UnitType.TREANT:
             return {"rooted"}
+        elif self == UnitType.GRYPHON:
+            return {"attacking"}
         return set()
     
     def get_attack_dice(self, special_properties: Set[str]) -> str:
@@ -42,6 +50,8 @@ class UnitType(Enum):
             return "1d6"
         elif self == UnitType.TREANT and "rooted" in special_properties:
             return "1d4+2"  # Enhanced attack when rooted
+        elif self == UnitType.GRYPHON and "attacking" in special_properties:
+            return "1d8+2"  # Enhanced attack when attacking
         return self.attack_dice
     
     @property
@@ -50,7 +60,9 @@ class UnitType(Enum):
             UnitType.INFANTRY: "1d4",
             UnitType.CAVALRY: "2d4",
             UnitType.SPEARMEN: "1d4",
-            UnitType.TREANT: "1d4"  # Same as Infantry
+            UnitType.TREANT: "1d4",  # Same as Infantry
+            UnitType.GRYPHON: "2d4",  # Same as Cavalry
+            UnitType.ARTILLERY: "1d6"  # Artillery casualty dice
         }
         return dice.get(self, "")
     
@@ -60,7 +72,9 @@ class UnitType(Enum):
             UnitType.INFANTRY: "1d4",
             UnitType.CAVALRY: "1d4",
             UnitType.SPEARMEN: "1d6",
-            UnitType.TREANT: "1d4"  # Same as Infantry
+            UnitType.TREANT: "1d4",  # Same as Infantry
+            UnitType.GRYPHON: "1d4",  # Same as Cavalry
+            UnitType.ARTILLERY: "2d8"  # Artillery wall dice
         }
         return dice.get(self, "")
     
@@ -70,7 +84,9 @@ class UnitType(Enum):
             UnitType.INFANTRY: 1,
             UnitType.CAVALRY: 0,
             UnitType.SPEARMEN: 2,
-            UnitType.TREANT: 1  # Same as Infantry
+            UnitType.TREANT: 1,  # Same as Infantry
+            UnitType.GRYPHON: 0,  # Same as Cavalry
+            UnitType.ARTILLERY: 1  # Artillery wall bonus
         }
         return bonuses.get(self, 0)
         
@@ -80,7 +96,9 @@ class UnitType(Enum):
             UnitType.INFANTRY: "INF",
             UnitType.CAVALRY: "CAV",
             UnitType.SPEARMEN: "SPR",
-            UnitType.TREANT: "TRE"
+            UnitType.TREANT: "TRE",
+            UnitType.GRYPHON: "GRY",
+            UnitType.ARTILLERY: "ART"
         }
         return shorthands.get(self, "")
 
@@ -128,11 +146,26 @@ class Unit:
     @property
     def attack_dice(self) -> str:
         if self.is_army:
-            # Use special property modified attack dice for sub-units
-            return self._combine_dice([
-                unit.unit_type.get_attack_dice(unit.special_properties) 
-                for unit in self.sub_units
-            ])
+            # Check for artillery bonus
+            artillery_count = sum(1 for unit in self.sub_units if unit.unit_type == UnitType.ARTILLERY)
+            total_units = len(self.sub_units)
+            
+            # If less than half of the army is artillery, increase artillery attack dice
+            if artillery_count > 0 and artillery_count < total_units / 2:
+                # Use special property modified attack dice for sub-units
+                dice_list = []
+                for unit in self.sub_units:
+                    if unit.unit_type == UnitType.ARTILLERY:
+                        dice_list.append("3d4")  # Increased artillery attack
+                    else:
+                        dice_list.append(unit.unit_type.get_attack_dice(unit.special_properties))
+                return self._combine_dice(dice_list)
+            else:
+                # Normal attack dice combination
+                return self._combine_dice([
+                    unit.unit_type.get_attack_dice(unit.special_properties) 
+                    for unit in self.sub_units
+                ])
         return self.unit_type.get_attack_dice(self.special_properties)
     
     @property

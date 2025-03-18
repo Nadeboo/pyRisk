@@ -1,8 +1,9 @@
 # units_screen.py
 
 import tkinter as tk
-from tkinter import ttk, messagebox
-from pyRisk.unit import Unit, UnitType
+from tkinter import ttk, messagebox, simpledialog
+from pyRisk.unit import Unit, UnitType, UnitClass
+from pyRisk.custom_scrollbar import CustomScrollbar
 
 
 class UnitsScreen:
@@ -16,29 +17,39 @@ class UnitsScreen:
             self.app.show_game_screen()
             return
             
-        self.frame = tk.Frame(parent)
+        self.frame = tk.Frame(parent, bg=app.current_theme['bg'])
         self.frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Store current theme reference
+        self.current_theme = app.current_theme
+        
         self.setup_widgets()
 
     def setup_widgets(self):
             # Main title
-            title_frame = tk.Frame(self.frame)
+            title_frame = tk.Frame(self.frame, bg=self.current_theme['bg'])
             title_frame.pack(fill=tk.X, pady=20)
-            tk.Label(title_frame, text="Army Management", font=("Arial", 24)).pack(expand=True)
+            tk.Label(title_frame, text="Army Management", font=("Arial", 24), 
+                   bg=self.current_theme['bg'], fg=self.current_theme['fg']).pack(expand=True)
 
             # Army Creation Frame
-            creation_frame = tk.Frame(self.frame)
+            creation_frame = tk.Frame(self.frame, bg=self.current_theme['bg'])
             creation_frame.pack(fill=tk.X, padx=20, pady=10)
             
+            # Configure ttk style for the Treeview and Combobox
+            self.setup_ttk_styles()
+            
             # Player Selection
-            player_frame = tk.Frame(creation_frame)
+            player_frame = tk.Frame(creation_frame, bg=self.current_theme['bg'])
             player_frame.pack(fill=tk.X, pady=5)
-            tk.Label(player_frame, text="Owner:").pack(side=tk.LEFT, padx=5)
+            tk.Label(player_frame, text="Owner:", bg=self.current_theme['bg'], 
+                   fg=self.current_theme['fg']).pack(side=tk.LEFT, padx=5)
             self.player_var = tk.StringVar()
             self.player_dropdown = ttk.Combobox(
                 player_frame, 
                 textvariable=self.player_var,
-                state='readonly'
+                state='readonly',
+                style='Dark.TCombobox'
             )
             self.player_dropdown.pack(side=tk.LEFT, padx=5)
             self.update_player_list()
@@ -47,24 +58,24 @@ class UnitsScreen:
             tk.Button(
                 creation_frame,
                 text="Create Army",
-                command=self.create_army
+                command=self.create_army,
+                bg=self.current_theme['button_bg'],
+                fg=self.current_theme['button_fg'],
+                activebackground=self.current_theme['highlight_bg'],
+                activeforeground=self.current_theme['highlight_fg']
             ).pack(pady=10)
             
             # Split the main area into two columns
-            main_frame = tk.Frame(self.frame)
+            main_frame = tk.Frame(self.frame, bg=self.current_theme['bg'])
             main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
             
             # Left side: Army List
-            list_frame = tk.Frame(main_frame)
+            list_frame = tk.Frame(main_frame, bg=self.current_theme['bg'])
             list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             
             # Create and configure the Treeview
-            columns = ('ID', 'Owner', 'Units', 'Move', 'Attack', 'Casualty', 'Wall', 'Wall Bonus', 'Special Properties')
-            self.tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=15)
-            
-            # Configure row height to accommodate multiple lines
-            style = ttk.Style()
-            style.configure('Treeview', rowheight=40)
+            columns = ('ID', 'Owner', 'Units', 'Move', 'Attack', 'Casualty', 'Wall', 'Wall Bonus', 'Capacity', 'Special Properties')
+            self.tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=15, style='Dark.Treeview')
             
             # Configure columns
             column_widths = {
@@ -76,6 +87,7 @@ class UnitsScreen:
                 'Casualty': 100,
                 'Wall': 100,
                 'Wall Bonus': 100,
+                'Capacity': 80,
                 'Special Properties': 150
             }
             
@@ -83,13 +95,35 @@ class UnitsScreen:
                 self.tree.heading(col, text=col, anchor=tk.CENTER)
                 self.tree.column(col, width=column_widths[col], anchor=tk.CENTER)
             
-            # Add scrollbars
-            y_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
-            x_scrollbar = ttk.Scrollbar(list_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
+            # Add scrollbars - Use custom scrollbars
+            # Get scrollbar colors from theme
+            scroll_bg = self.current_theme.get('scrollbar_bg', self.current_theme['button_bg'])
+            scroll_fg = self.current_theme.get('scrollbar_fg', self.current_theme['highlight_bg'])
+            
+            # Create vertical custom scrollbar
+            y_scrollbar = CustomScrollbar(
+                list_frame, 
+                orientation="vertical", 
+                command=self.tree.yview,
+                bg=scroll_bg,
+                fg=scroll_fg,
+                width=12
+            )
+            
+            # Create horizontal custom scrollbar
+            x_scrollbar = CustomScrollbar(
+                list_frame, 
+                orientation="horizontal", 
+                command=self.tree.xview,
+                bg=scroll_bg,
+                fg=scroll_fg,
+                width=12
+            )
+            
             self.tree.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=x_scrollbar.set)
             
-            # Pack everything
-            self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            # Pack everything - make sure the scrollbars are properly positioned
+            self.tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
             y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
             x_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
             
@@ -105,6 +139,98 @@ class UnitsScreen:
             
             self.dragged_item = None
             self.update_army_list()
+
+    def setup_ttk_styles(self):
+        """Setup enhanced styling for ttk widgets to properly apply dark theme"""
+        style = ttk.Style()
+        
+        # Create a new theme to modify
+        try:
+            # Try to create our theme - this might fail if it already exists
+            style.theme_create("dark_theme", parent="alt", 
+                             settings={
+                                 "TCombobox": {
+                                     "configure": {
+                                         "selectbackground": self.current_theme['highlight_bg'],
+                                         "fieldbackground": self.current_theme['bg'],
+                                         "background": self.current_theme['bg'],
+                                         "foreground": self.current_theme['fg']
+                                     }
+                                 },
+                                 "Treeview": {
+                                     "configure": {
+                                         "background": self.current_theme['bg'],
+                                         "foreground": self.current_theme['fg'],
+                                         "fieldbackground": self.current_theme['bg'],
+                                         "borderwidth": 0,
+                                         "rowheight": 40
+                                     },
+                                     "map": {
+                                         "background": [("selected", self.current_theme['highlight_bg'])],
+                                         "foreground": [("selected", self.current_theme['highlight_fg'])]
+                                     }
+                                 },
+                                 "Treeview.Heading": {
+                                     "configure": {
+                                         "background": self.current_theme['button_bg'],
+                                         "foreground": self.current_theme['button_fg'],
+                                         "relief": "flat"
+                                     },
+                                     "map": {
+                                         "background": [("active", self.current_theme['highlight_bg'])],
+                                         "foreground": [("active", self.current_theme['highlight_fg'])]
+                                     }
+                                 }
+                             })
+        except tk.TclError:
+            # Theme already exists, just use it
+            pass
+        
+        # Use our theme
+        style.theme_use("dark_theme")
+        
+        # Create specific widget styles
+        
+        # For Treeview
+        style.configure("Dark.Treeview",
+                      background=self.current_theme['bg'],
+                      foreground=self.current_theme['fg'],
+                      fieldbackground=self.current_theme['bg'],
+                      borderwidth=0)
+                      
+        style.map("Dark.Treeview",
+                background=[("selected", self.current_theme['highlight_bg'])],
+                foreground=[("selected", self.current_theme['highlight_fg'])])
+                
+        # For Treeview headings
+        style.configure("Dark.Treeview.Heading",
+                      background=self.current_theme['button_bg'],
+                      foreground=self.current_theme['button_fg'],
+                      relief="flat")
+                      
+        style.map("Dark.Treeview.Heading",
+                background=[("active", self.current_theme['highlight_bg'])],
+                foreground=[("active", self.current_theme['highlight_fg'])])
+                
+        # For Combobox
+        style.configure("Dark.TCombobox",
+                      selectbackground=self.current_theme['highlight_bg'],
+                      selectforeground=self.current_theme['highlight_fg'],
+                      fieldbackground=self.current_theme['bg'],
+                      background=self.current_theme['bg'],
+                      foreground=self.current_theme['fg'],
+                      arrowcolor=self.current_theme['button_fg'])
+                      
+        style.map("Dark.TCombobox",
+                 fieldbackground=[("readonly", self.current_theme['bg'])],
+                 background=[("readonly", self.current_theme['button_bg'])],
+                 foreground=[("readonly", self.current_theme['button_fg'])])
+                 
+        # Fix Combobox dropdown styling - need to configure the dropdown specifically
+        self.app.master.option_add('*TCombobox*Listbox.background', self.current_theme['bg'])
+        self.app.master.option_add('*TCombobox*Listbox.foreground', self.current_theme['fg'])
+        self.app.master.option_add('*TCombobox*Listbox.selectBackground', self.current_theme['highlight_bg'])
+        self.app.master.option_add('*TCombobox*Listbox.selectForeground', self.current_theme['highlight_fg'])
 
     def on_double_click(self, event):
         """Handle double-click on a cell, specifically for special properties"""
@@ -132,19 +258,27 @@ class UnitsScreen:
         dialog.transient(self.frame)
         dialog.grab_set()
         
+        # Apply the theme to the dialog
+        dialog.configure(bg=self.current_theme['bg'])
+        
         # Create a frame for the checkboxes
-        props_frame = tk.Frame(dialog)
+        props_frame = tk.Frame(dialog, bg=self.current_theme['bg'])
         props_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
         
         # Add a label
-        tk.Label(props_frame, text="Available Special Properties", font=("Arial", 12, "bold")).pack(pady=(0, 10))
+        tk.Label(props_frame, text="Available Special Properties", 
+              font=("Arial", 12, "bold"),
+              bg=self.current_theme['bg'],
+              fg=self.current_theme['fg']).pack(pady=(0, 10))
         
         # Add checkboxes for available properties
         checkbox_vars = {}
         available_properties = army.available_special_properties
         
         if not available_properties:
-            tk.Label(props_frame, text="No special properties available").pack(pady=10)
+            tk.Label(props_frame, text="No special properties available",
+                   bg=self.current_theme['bg'],
+                   fg=self.current_theme['fg']).pack(pady=10)
         
         for prop in available_properties:
             var = tk.BooleanVar(value=prop in army.special_properties)
@@ -153,12 +287,17 @@ class UnitsScreen:
             cb = tk.Checkbutton(
                 props_frame,
                 text=prop.title(),
-                variable=var
+                variable=var,
+                bg=self.current_theme['bg'],
+                fg=self.current_theme['fg'],
+                activebackground=self.current_theme['bg'],
+                activeforeground=self.current_theme['fg'],
+                selectcolor=self.current_theme['bg']
             )
             cb.pack(anchor=tk.W, pady=2)
         
         # Add buttons
-        button_frame = tk.Frame(dialog)
+        button_frame = tk.Frame(dialog, bg=self.current_theme['bg'])
         button_frame.pack(fill=tk.X, padx=20, pady=10)
         
         def save_properties():
@@ -182,8 +321,19 @@ class UnitsScreen:
             self.update_army_list()
             dialog.destroy()
         
-        tk.Button(button_frame, text="Save", command=save_properties).pack(side=tk.RIGHT, padx=5)
-        tk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=5)
+        tk.Button(button_frame, text="Save", 
+               command=save_properties,
+               bg=self.current_theme['button_bg'],
+               fg=self.current_theme['button_fg'],
+               activebackground=self.current_theme['highlight_bg'],
+               activeforeground=self.current_theme['highlight_fg']).pack(side=tk.RIGHT, padx=5)
+               
+        tk.Button(button_frame, text="Cancel", 
+               command=dialog.destroy,
+               bg=self.current_theme['button_bg'],
+               fg=self.current_theme['button_fg'],
+               activebackground=self.current_theme['highlight_bg'],
+               activeforeground=self.current_theme['highlight_fg']).pack(side=tk.RIGHT, padx=5)
 
     def on_army_select(self, event):
         """Update special properties when an army is selected"""
@@ -231,11 +381,24 @@ class UnitsScreen:
             target_army = next((u for u in self.app.units if u.unit_id == target_id), None)
             
             if source_army and target_army:
-                # Try to merge
-                if self.app.unit.merge_armies(source_army, target_army):
+                # Try to merge using the static method from Unit class
+                if Unit.merge_armies(source_army, target_army):
+                    # Successfully merged
                     self.update_army_list()
                     if not isinstance(self.app.current_screen, type(self)):
                         self.app.current_screen.display_map_image()
+                else:
+                    # Check why the merge might have failed
+                    if not source_army.is_army or not target_army.is_army:
+                        messagebox.showwarning("Merge Failed", "Both units must be armies to merge.")
+                    elif source_army.owner != target_army.owner:
+                        messagebox.showwarning("Merge Failed", "Can only merge armies from the same player.")
+                    elif not target_army.can_merge_army(source_army):
+                        messagebox.showwarning(
+                            "Army Size Limit", 
+                            f"Cannot merge. Target army ({target_army.current_army_size}/{target_army.max_army_size}) "
+                            f"doesn't have capacity for source army ({source_army.current_army_size} slots)."
+                        )
         
         self.dragged_item = None
 
@@ -256,12 +419,27 @@ class UnitsScreen:
             
         owner = self.player_var.get()
         
+        # Ask for custom max army size (default is the DEFAULT_MAX_ARMY_SIZE)
+        from pyRisk.unit import DEFAULT_MAX_ARMY_SIZE
+        max_size = simpledialog.askinteger(
+            "Army Size Limit", 
+            f"Enter the maximum size for this army (default is {DEFAULT_MAX_ARMY_SIZE}):",
+            initialvalue=DEFAULT_MAX_ARMY_SIZE,
+            minvalue=1, 
+            maxvalue=100
+        )
+        
+        # If user cancels, use the default size
+        if max_size is None:
+            max_size = DEFAULT_MAX_ARMY_SIZE
+        
         # Create army as a special unit that will contain sub-units
         army = Unit(
             owner=owner,
             unit_type=UnitType.INFANTRY,  # Default type, doesn't matter for armies
             unit_id=self.app.next_unit_id,
-            position=None  # No position - must be placed on map manually
+            position=None,  # No position - must be placed on map manually
+            max_army_size=max_size  # Set the custom max size
         )
         
         # Add to app's units list
@@ -284,15 +462,45 @@ class UnitsScreen:
             return
         
         # Create popup menu
-        popup = tk.Menu(self.tree, tearoff=0)
+        popup = tk.Menu(self.tree, tearoff=0,
+                     bg=self.current_theme['menu_bg'],
+                     fg=self.current_theme['menu_fg'],
+                     activebackground=self.current_theme['highlight_bg'],
+                     activeforeground=self.current_theme['highlight_fg'])
         
-        # Add available unit types
+        # Create submenus for different unit classes
+        land_menu = tk.Menu(popup, tearoff=0,
+                         bg=self.current_theme['menu_bg'],
+                         fg=self.current_theme['menu_fg'],
+                         activebackground=self.current_theme['highlight_bg'],
+                         activeforeground=self.current_theme['highlight_fg'])
+                         
+        naval_menu = tk.Menu(popup, tearoff=0,
+                          bg=self.current_theme['menu_bg'],
+                          fg=self.current_theme['menu_fg'],
+                          activebackground=self.current_theme['highlight_bg'],
+                          activeforeground=self.current_theme['highlight_fg'])
+        
+        # Add land units to land submenu
         for unit_type in UnitType:
-            popup.add_command(
-                label=f"Add {unit_type.value}",
-                command=lambda t=unit_type: self.add_unit_to_army(army, t)
-            )
-            
+            if hasattr(unit_type, 'unit_class') and unit_type.unit_class == UnitClass.LAND:
+                land_menu.add_command(
+                    label=f"Add {unit_type.value}",
+                    command=lambda t=unit_type: self.add_unit_to_army(army, t)
+                )
+        
+        # Add naval units to naval submenu
+        for unit_type in UnitType:
+            if hasattr(unit_type, 'unit_class') and unit_type.unit_class == UnitClass.NAVAL:
+                naval_menu.add_command(
+                    label=f"Add {unit_type.value} (Capacity: {unit_type.carrying_capacity})",
+                    command=lambda t=unit_type: self.add_unit_to_army(army, t)
+                )
+        
+        # Add submenus to main popup
+        popup.add_cascade(label="Add Land Unit", menu=land_menu)
+        popup.add_cascade(label="Add Naval Unit", menu=naval_menu)
+        
         # Add separator
         popup.add_separator()
         
@@ -350,11 +558,35 @@ class UnitsScreen:
 
     def add_unit_to_army(self, army, unit_type):
         """Add a unit to an army"""
+        # For Gravelord, prompt for dice count
+        custom_params = {}
+        if unit_type == UnitType.GRAVELORD:
+            dice_count = simpledialog.askinteger(
+                "Gravelord Dice Count", 
+                "Enter the dice count for the Gravelord (1-20):",
+                minvalue=1, maxvalue=20
+            )
+            if dice_count is None:  # User cancelled
+                return
+                
+            custom_params = {"dice_count": dice_count}
+            
+        # Check if unit can be added to army based on size limits
+        if not army.can_add_unit(unit_type, custom_params):
+            slots_needed = unit_type.get_slots_used(custom_params)
+            messagebox.showwarning(
+                "Army Size Limit", 
+                f"Cannot add {unit_type.value} (needs {slots_needed} slots). "
+                f"Army is at {army.current_army_size}/{army.max_army_size} slots."
+            )
+            return
+            
         unit = Unit(
             owner=army.owner,
             unit_type=unit_type,
             unit_id=self.app.next_unit_id,
-            position=None
+            position=None,
+            custom_params=custom_params
         )
         
         army.sub_units.append(unit)
@@ -388,28 +620,115 @@ class UnitsScreen:
                             if prop not in unit_props:
                                 unit_props[prop] = []
                             unit_props[prop].append(sub_unit.unit_id)
-                    
-                    for prop, unit_ids in unit_props.items():
-                        active_props.append(f"{prop.title()}")
+                            
+                    active_props = [f"{prop}: units {','.join(map(str, units))}" 
+                                 for prop, units in unit_props.items()]
                 else:
-                    # For individual units, just show the properties
-                    active_props = [prop.title() for prop in unit.special_properties]
+                    active_props = list(unit.special_properties)
+                    
+                # Show size for armies
+                size_info = ""
+                if unit.is_army:
+                    size_info = f" ({unit.current_army_size}/{unit.max_army_size})"
                 
-                special_props_text = ", ".join(active_props) if active_props else "None"
+                # Get carrying capacity for naval units
+                capacity_info = "-"
+                if hasattr(unit, 'is_naval_army') and unit.is_naval_army:
+                    capacity_info = str(unit.total_carrying_capacity)
+                elif hasattr(unit.unit_type, 'unit_class') and unit.unit_type.unit_class == UnitClass.NAVAL:
+                    capacity_info = str(unit.unit_type.carrying_capacity)
                 
-                self.tree.insert('', 'end', values=(
-                    unit.unit_id,
-                    unit.owner,
-                    unit.shorthand if unit.is_army else "Empty",
-                    unit.movement_speed,
-                    unit.attack_dice,
-                    unit.casualty_dice,
-                    unit.wall_dice,
-                    f"+{unit.wall_bonus}" if unit.wall_bonus > 0 else unit.wall_bonus,
-                    special_props_text
-                ))
+                # Add row with all unit data
+                self.tree.insert(
+                    '', 'end', text=str(unit.unit_id),
+                    values=(
+                        unit.unit_id,
+                        unit.owner,
+                        unit.shorthand + size_info,  # Add size info to display
+                        str(unit.movement_speed),
+                        unit.attack_dice,
+                        unit.casualty_dice,
+                        unit.wall_dice,
+                        f"+{unit.wall_bonus}",
+                        capacity_info,  # Add carrying capacity
+                        ", ".join(active_props) if active_props else "None"
+                    )
+                )
 
     def destroy(self):
         """Clean up the screen when switching away"""
         if hasattr(self, 'frame'):
             self.frame.destroy()
+
+    def apply_theme(self, theme):
+        """Apply the current theme to all widgets"""
+        self.current_theme = theme
+        
+        # Apply to main frame
+        self.frame.configure(bg=theme['bg'])
+        
+        # Apply to all child widgets recursively
+        self.apply_theme_to_widget(self.frame, theme)
+        
+        # Re-setup the ttk styles with new theme colors
+        self.setup_ttk_styles()
+        
+        # Update the army list to reflect the new theme
+        self.update_army_list()
+        
+    def apply_theme_to_widget(self, widget, theme):
+        """Apply theme to a single widget and all its children"""
+        try:
+            if isinstance(widget, tk.Frame) or isinstance(widget, tk.LabelFrame):
+                widget.configure(bg=theme['bg'])
+            elif isinstance(widget, tk.Button):
+                widget.configure(
+                    bg=theme['button_bg'],
+                    fg=theme['button_fg'],
+                    activebackground=theme['highlight_bg'],
+                    activeforeground=theme['highlight_fg']
+                )
+            elif isinstance(widget, (tk.Label, tk.Checkbutton, tk.Radiobutton)):
+                widget.configure(
+                    bg=theme['bg'],
+                    fg=theme['fg']
+                )
+                # Configure additional specific attributes for checkbuttons/radiobuttons
+                if isinstance(widget, (tk.Checkbutton, tk.Radiobutton)):
+                    widget.configure(
+                        activebackground=theme['bg'],
+                        activeforeground=theme['fg'],
+                        selectcolor=theme['bg']
+                    )
+            elif isinstance(widget, tk.Entry) or isinstance(widget, tk.Text):
+                widget.configure(
+                    bg=theme['bg'],
+                    fg=theme['fg'],
+                    insertbackground=theme['fg']  # cursor color
+                )
+            elif isinstance(widget, tk.Canvas):
+                widget.configure(bg=theme['canvas_bg'])
+            elif isinstance(widget, tk.Menu):
+                widget.configure(
+                    bg=theme['menu_bg'],
+                    fg=theme['menu_fg'],
+                    activebackground=theme['highlight_bg'],
+                    activeforeground=theme['highlight_fg']
+                )
+            # Handle our CustomScrollbar class
+            elif hasattr(widget, 'canvas') and hasattr(widget, 'set') and hasattr(widget, 'config'):
+                # This might be a CustomScrollbar instance
+                try:
+                    widget.config(
+                        bg=theme['scrollbar_bg'] if 'scrollbar_bg' in theme else theme['button_bg'],
+                        fg=theme['scrollbar_fg'] if 'scrollbar_fg' in theme else theme['highlight_bg']
+                    )
+                except (tk.TclError, AttributeError):
+                    pass
+        except tk.TclError:
+            # Skip widgets that can't be configured
+            pass
+            
+        # Process children recursively
+        for child in widget.winfo_children():
+            self.apply_theme_to_widget(child, theme)

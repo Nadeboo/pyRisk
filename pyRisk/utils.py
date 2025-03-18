@@ -14,11 +14,12 @@ def find_connected_region(pixels, start_x, start_y, target_color, width, height,
     if start_x < 0 or start_x >= width or start_y < 0 or start_y >= height:
         return set()
         
-    visited = {(start_x, start_y)}
-    stack = [(start_x, start_y)]
+    # Use a single set for both visited tracking and region collection
+    # This reduces memory usage and improves performance
     region = {(start_x, start_y)}
+    stack = [(start_x, start_y)]
     
-    # Pre-compute the valid coordinate ranges for faster boundary checking
+    # Pre-compute the valid coordinate ranges
     x_range = range(width)
     y_range = range(height)
     
@@ -26,22 +27,34 @@ def find_connected_region(pixels, start_x, start_y, target_color, width, height,
     if len(target_color) == 4:
         target_color = target_color[:3]
     
+    # Pre-compute the square of tolerance for faster comparison
+    # (Avoiding costly sqrt operations in color_distance)
+    tolerance_squared = tolerance * tolerance
+    
+    # Pre-compute the neighbor offsets
+    neighbors = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+    
     while stack:
         x, y = stack.pop()
         
         # Check 4-connected neighbors
-        for nx, ny in [(x+1, y), (x-1, y), (x, y+1), (x, y-1)]:
-            if (nx, ny) in visited or nx not in x_range or ny not in y_range:
+        for dx, dy in neighbors:
+            nx, ny = x + dx, y + dy
+            
+            # Fast boundary check and visited check
+            if nx not in x_range or ny not in y_range or (nx, ny) in region:
                 continue
                 
-            visited.add((nx, ny))
+            # Get current color (optimized color comparison)
             current_color = pixels[nx, ny]
             if len(current_color) == 4:
                 current_color = current_color[:3]
-                
-            if color_distance(current_color, target_color) <= tolerance:
-                stack.append((nx, ny))
+            
+            # Use faster squared distance comparison
+            squared_dist = sum((a - b) ** 2 for a, b in zip(current_color, target_color))
+            if squared_dist <= tolerance_squared:
                 region.add((nx, ny))
+                stack.append((nx, ny))
                 
     return region
 
@@ -141,21 +154,26 @@ def flood_fill(image, x, y, target_color, replacement_color, tolerance=5):
     if not region:
         return None
     
+    # Prepare the replacement color as a tuple for all cases
+    final_replacement_color = replacement_rgb
+    if len(replacement_color) == 4:
+        final_replacement_color = replacement_color
+    
     # Batch process all pixels in the region
     for px, py in region:
-        pixels[px, py] = replacement_rgb if len(replacement_color) == 3 else replacement_rgb
+        pixels[px, py] = final_replacement_color
     
-    # Calculate region statistics more efficiently
-    x_coords = [x for x, _ in region]
-    y_coords = [y for _, y in region]
+    # Calculate region statistics without creating intermediate lists
+    min_x = min(x for x, _ in region)
+    max_x = max(x for x, _ in region)
+    min_y = min(y for _, y in region)
+    max_y = max(y for _, y in region)
     
-    min_x = min(x_coords)
-    max_x = max(x_coords)
-    min_y = min(y_coords)
-    max_y = max(y_coords)
-    center = ((min_x + max_x) // 2, (min_y + max_y) // 2)
+    # Calculate center point
+    center_x = (min_x + max_x) // 2
+    center_y = (min_y + max_y) // 2
     
     return {
-        'center': center,
+        'center': (center_x, center_y),
         'boundary': region
     }

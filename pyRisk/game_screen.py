@@ -1,24 +1,27 @@
 # game_screen.py
 
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, colorchooser
 from PIL import ImageTk, ImageDraw, Image, ImageFont
 from pyRisk.utils import flood_fill, check_territory_in_radius
 from pyRisk.players_screen import PlayersScreen
 from pyRisk.game_screen_overlay import GameScreenOverlay
 from pyRisk.sprite_manager import SpriteManager, SpriteInfo
+from pyRisk.player import Player
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, Any
 from pyRisk.canvas_manager import CanvasManager
 from pyRisk.sidebar_manager import SidebarManager
 from pyRisk.map_interaction_manager import MapInteractionManager
-from pyRisk.unit import UnitType
+from pyRisk.unit import Unit, UnitType, UnitClass, DEFAULT_MAX_ARMY_SIZE
+from pyRisk.custom_scrollbar import CustomScrollbar
+from pyRisk.sprite_manager import SpriteInfo
 
 class GameScreen:
     def __init__(self, parent, app):
         self.parent = parent
         self.app = app
-        self.frame = tk.Frame(parent)
+        self.frame = tk.Frame(parent, bg=app.current_theme['bg'])
         self.frame.pack(fill=tk.BOTH, expand=True)
         
         # Initialize state variables
@@ -34,9 +37,10 @@ class GameScreen:
         self.dragged_item = None
         self.map_photo = None
         self.map_item = None
+        self._unit_canvas_items = []  # Initialize empty list to track unit canvas items
 
         # Initialize sprite manager with app reference
-        self.sprite_manager = SpriteManager(app)
+        self.sprite_manager = SpriteManager(app, sprite_folder="pyRisk/sprites")
 
         # Initialize overlay drawer
         self.overlay_drawer = GameScreenOverlay()
@@ -45,52 +49,371 @@ class GameScreen:
         self.map_interaction_manager = MapInteractionManager(app)
         
         # Create single main layout container
-        self.main_container = tk.Frame(self.frame)
+        self.main_container = tk.Frame(self.frame, bg=app.current_theme['bg'])
         self.main_container.pack(fill=tk.BOTH, expand=True)
 
-        # Create sidebar and map container
-        self.sidebar = tk.Frame(self.main_container, width=150, bg='lightgrey')
-        self.map_container = tk.Frame(self.main_container)
-
-        # Pack frames
-        self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
-        self.sidebar.pack_propagate(False)
-        self.map_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # Setup components
+        # Store current theme reference
+        self.current_theme = app.current_theme
+        
+        # Setup UI components
         self.setup_canvas()
         self.setup_sidebar()
-
-        # Initialize zoom parameters
+        self.bind_events()
+        
+        # Initialize zoom level and limits
         self.zoom_level = 1.0
         self.min_zoom = 0.1
         self.max_zoom = 5.0
-        self.zoom_update_id = None
-
-        # Configure canvas
-        self.canvas.configure(
-            scrollregion=(0, 0, 1, 1),
-            insertwidth=0,
-            highlightthickness=0,
-            xscrollincrement=1,
-            yscrollincrement=1,
-            takefocus=True
-        )
-
-        # Initialize tile cache
-        self.tile_cache = {}
-        self.tile_size = 256
-
-        # Display map if exists
-        if self.app.map_image:
+        
+        # Initialize tile cache for rendering
+        self._tile_cache = {}
+        self._cached_base_image = None
+        
+        # Display the map if available
+        if app.map_image:
             self.display_map_image()
-            
+        
         # Bind events
         self.bind_events()
         
         # Store references in app
         self.app.sprite_manager = self.sprite_manager
         self.app.map_interaction_manager = self.map_interaction_manager
+        
+    def bind_events(self):
+        """Bind event handlers to the canvas"""
+        # Canvas events
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<Button-3>", self.on_canvas_right_click)  # Use the more comprehensive right-click menu
+        
+        # Also bind to right-click on Windows platforms
+        try:
+            # This might fail on some platforms
+            self.canvas.bind("<ButtonPress-3>", self.on_canvas_right_click)  # Alternative binding for right-click
+            self.canvas.bind("<ButtonRelease-3>", lambda e: None)  # Prevent issues with release
+            
+            # Add Windows-specific context menu event (very important for Windows)
+            self.canvas.bind("<Button-3>", lambda e: self.canvas.focus_set())  # Focus canvas on right-click
+            self.master.bind("<Key-Menu>", lambda e: self.on_canvas_right_click(e))   # Context menu key
+            self.master.bind("<Shift-F10>", lambda e: self.on_canvas_right_click(e))  # Shift+F10 (context menu)
+            
+            # Force bind the context menu event via Tcl/Tk directly for Windows
+            self.canvas.bind("<<ContextMenu>>", self.on_canvas_right_click)  # Standard context menu event
+            self.canvas.event_add("<<ContextMenu>>", "<Button-3>")    # Map right click to context menu
+        except Exception as e:
+            print(f"Could not bind additional right-click events: {e}")
+        
+        # Print a message to help the user
+        print("\n=== Right-click on the map to place cities and structures ===\n")
+        print("If right-click menu doesn't appear, try:")
+        print("1. Click the right mouse button (not the middle button)")
+        print("2. If that doesn't work, try Shift+Right-click")
+        print("3. On Mac, try Control+Click or two-finger tap\n")
+        
+        # Mousewheel for zoom/scroll
+        self.canvas.bind("<MouseWheel>", self.on_mousewheel)  # Windows
+        self.canvas.bind("<Button-4>", self.on_mousewheel)    # Linux scroll up
+        self.canvas.bind("<Button-5>", self.on_mousewheel)    # Linux scroll down
+        
+    def on_right_click(self, event):
+        """Handle right-click on the canvas to show context menu"""
+        if self.app.map_image is None:
+            return
+            
+        print(f"Right-click detected at {event.x}, {event.y}")
+            
+        # Convert canvas coordinates to image coordinates
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        
+        # Calculate image coordinates based on zoom level
+        x = int(canvas_x / self.zoom_level)
+        y = int(canvas_y / self.zoom_level)
+        
+        print(f"Converted coordinates: {x}, {y}")
+        
+        # Check if click is within image bounds
+        if x < 0 or y < 0 or x >= self.app.map_image.width or y >= self.app.map_image.height:
+            print("Click outside image bounds")
+            return
+            
+        # Check if we clicked on a unit
+        clicked_unit = None
+        if self.app.roll_mode == 'tregonia':
+            for unit in self.app.units:
+                if unit.position:
+                    unit_x, unit_y = unit.position
+                    # Define a click radius for selection (20 pixels)
+                    if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
+                        clicked_unit = unit
+                        print(f"Clicked on unit: {unit.unit_id}")
+                        break
+                        
+        if clicked_unit:
+            print("Showing unit popup menu")
+            # If we clicked on a unit, show unit context menu
+            self.show_unit_popup(event, clicked_unit)
+            return
+            
+        # Otherwise, show general context menu
+        print("Showing general context menu")
+        self._show_context_menu(event, x, y)
+    
+    # Rename the original show_context_menu to _show_context_menu to debug the issue
+    def _show_context_menu(self, event, x, y):
+        """Show context menu for map interaction.
+        
+        Args:
+            event: The event that triggered this method
+            x: X-coordinate in image space
+            y: Y-coordinate in image space
+        """
+        print(f"Creating context menu for position {x}, {y}")
+        
+        # Create popup menu with theme styling
+        popup = tk.Menu(self.canvas, tearoff=0,
+                     bg=self.current_theme['menu_bg'],
+                     fg=self.current_theme['menu_fg'],
+                     activebackground=self.current_theme['highlight_bg'],
+                     activeforeground=self.current_theme['highlight_fg'])
+        
+        # Context information
+        popup.add_command(
+            label=f"Position: ({x}, {y})",
+            state=tk.DISABLED
+        )
+        
+        # Add separator
+        popup.add_separator()
+        
+        # === Territory Painting Options ===
+        # Territory management section
+        popup.add_command(label="Territory Management:", state=tk.DISABLED)
+        
+        # Add territory painting options if a player is selected
+        if self.app.selected_player:
+            popup.add_command(
+                label=f"Paint Territory for {self.app.selected_player.name}",
+                command=lambda: self.map_interaction_manager.paint_territory(
+                    self.app.map_image, 
+                    (x, y), 
+                    self.app.selected_player.color_rgb, 
+                    self.app.selected_player.name, 
+                    self.app.map_data, 
+                    self.app.adjacency_map,
+                    update_callback=self.display_map_image
+                )
+            )
+            print("Added 'Paint Territory' option")
+            
+            # Erase territory option
+            popup.add_command(
+                label="Erase Territory",
+                command=lambda: self.map_interaction_manager.erase_territory(
+                    self.app.map_image, 
+                    (x, y), 
+                    self.app.map_data,
+                    update_callback=self.display_map_image
+                )
+            )
+            print("Added 'Erase Territory' option")
+        else:
+            popup.add_command(
+                label="Paint Territory (Select a player first)",
+                state=tk.DISABLED
+            )
+        
+        # Add separator
+        popup.add_separator()
+        
+        # === Structure Placement Options ===
+        # Place city option
+        if self.app.selected_player:
+            popup.add_command(
+                label=f"Place City for {self.app.selected_player.name}",
+                command=lambda: self.place_city(x, y)
+            )
+            print("Added 'Place City' option")
+        else:
+            popup.add_command(
+                label="Place City (Select a player first)",
+                state=tk.DISABLED
+            )
+            print("Added disabled 'Place City' option")
+            
+        # Add separator before structures
+        popup.add_separator()
+        popup.add_command(label="Place Structure:", state=tk.DISABLED)
+        
+        # Force load sprites if not already loaded
+        if not hasattr(self.sprite_manager, 'sprites') or not self.sprite_manager.sprites:
+            print("Reloading sprites...")
+            self.sprite_manager.load_sprites()
+        
+        # Add structures directly to the main menu
+        print("Adding structure options directly to menu:")
+        
+        # Get available sprites - directly access the sprites dictionary
+        all_sprites = list(self.sprite_manager.sprites.keys())
+        print(f"Available sprites: {all_sprites}")
+        
+        # Check if we have any sprites
+        if not all_sprites:
+            popup.add_command(
+                label="No structures available",
+                state=tk.DISABLED
+            )
+            print("No sprites available")
+        else:
+            for sprite_name in sorted(all_sprites):
+                if sprite_name != 'city' and sprite_name != 'map_cut':  # Skip city and map sprites
+                    popup.add_command(
+                        label=f"   {sprite_name.title().replace('_', ' ')}",
+                        command=lambda s=sprite_name: self.place_sprite(s, x, y)
+                    )
+                    print(f"  Added option to place {sprite_name}")
+        
+        # Add separator before army option
+        popup.add_separator()
+        
+        # Add option to place army if in Tregonia mode
+        if self.app.roll_mode == 'tregonia' and self.app.selected_player:
+            popup.add_command(
+                label=f"Place Army for {self.app.selected_player.name}",
+                command=lambda: self.place_army_at_position(self.app.selected_player, (x, y))
+            )
+            print("Added 'Place Army' option")
+            
+        # Display the popup menu
+        print("Showing popup menu")
+        try:
+            popup.tk_popup(event.x_root, event.y_root)
+        except Exception as e:
+            print(f"Error showing popup: {e}")
+        
+    def invalidate_display_cache(self):
+        """Clear the display cache to force a complete redraw on next display_map_image call"""
+        self._cached_base_image = None
+        self._tile_cache = {}
+
+    def apply_theme(self, theme):
+        """Apply the provided theme to all widgets in this screen"""
+        self.current_theme = theme
+        
+        # Apply to main frame and container
+        self.frame.configure(bg=theme['bg'])
+        self.main_container.configure(bg=theme['bg'])
+        
+        # Apply to canvas if it exists
+        if hasattr(self, 'canvas'):
+            self.canvas.configure(bg=theme['canvas_bg'])
+            
+        # Apply to scrollbars if they exist
+        if hasattr(self, 'h_scrollbar') and hasattr(self, 'v_scrollbar'):
+            scroll_bg = theme.get('scrollbar_bg', theme['button_bg'])
+            scroll_fg = theme.get('scrollbar_fg', theme['highlight_bg'])
+            
+            # Apply theme to custom scrollbars
+            if hasattr(self.h_scrollbar, 'config'):
+                self.h_scrollbar.config(
+                    bg=scroll_bg,
+                    fg=scroll_fg
+                )
+            
+            if hasattr(self.v_scrollbar, 'config'):
+                self.v_scrollbar.config(
+                    bg=scroll_bg,
+                    fg=scroll_fg
+                )
+            
+        # Apply to sidebar frame if it exists
+        if hasattr(self, 'sidebar_frame'):
+            self.sidebar_frame.configure(bg=theme['frame_bg'])
+            
+            # Apply to all elements in the sidebar
+            for widget in self.sidebar_frame.winfo_children():
+                if isinstance(widget, tk.Frame):
+                    widget.configure(bg=theme['frame_bg'])
+                    # Apply theme to child widgets
+                    for child in widget.winfo_children():
+                        self.apply_theme_to_widget(child, theme)
+                else:
+                    self.apply_theme_to_widget(widget, theme)
+                    
+        # Apply to zoom frame if it exists
+        if hasattr(self, 'zoom_label'):
+            self.zoom_label.configure(bg=theme['bg'], fg=theme['fg'])
+            
+        # Refresh display
+        self.invalidate_display_cache()
+        if hasattr(self, 'display_map_image'):
+            self.display_map_image()
+            
+    def apply_theme_to_widget(self, widget, theme):
+        """Apply theme to a single widget and all its children"""
+        try:
+            # Handle standard tkinter widgets
+            if isinstance(widget, tk.Frame) or isinstance(widget, tk.LabelFrame):
+                widget.configure(bg=theme['frame_bg'])
+            elif isinstance(widget, tk.Button):
+                widget.configure(
+                    bg=theme['button_bg'],
+                    fg=theme['button_fg'],
+                    activebackground=theme['highlight_bg'],
+                    activeforeground=theme['highlight_fg']
+                )
+            elif isinstance(widget, (tk.Label, tk.Checkbutton, tk.Radiobutton)):
+                widget.configure(
+                    bg=theme['frame_bg'],
+                    fg=theme['fg']
+                )
+                # Configure additional specific attributes for checkbuttons/radiobuttons
+                if isinstance(widget, (tk.Checkbutton, tk.Radiobutton)):
+                    widget.configure(
+                        activebackground=theme['frame_bg'],
+                        activeforeground=theme['fg'],
+                        selectcolor=theme['bg']
+                    )
+            elif isinstance(widget, tk.Entry) or isinstance(widget, tk.Text):
+                widget.configure(
+                    bg=theme['bg'],
+                    fg=theme['fg'],
+                    insertbackground=theme['fg']  # cursor color
+                )
+            elif isinstance(widget, tk.Canvas):
+                widget.configure(bg=theme['canvas_bg'])
+            elif isinstance(widget, tk.Listbox):
+                widget.configure(
+                    bg=theme['bg'],
+                    fg=theme['fg'],
+                    selectbackground=theme['highlight_bg'],
+                    selectforeground=theme['highlight_fg']
+                )
+            elif isinstance(widget, tk.Scrollbar):
+                # Handle regular scrollbars
+                widget.configure(
+                    bg=theme['scrollbar_bg'] if 'scrollbar_bg' in theme else theme['button_bg'],
+                    troughcolor=theme['scrollbar_bg'] if 'scrollbar_bg' in theme else theme['bg'],
+                    activebackground=theme['scrollbar_fg'] if 'scrollbar_fg' in theme else theme['highlight_bg'],
+                    highlightbackground=theme['scrollbar_bg'] if 'scrollbar_bg' in theme else theme['bg']
+                )
+            # Handle our CustomScrollbar class
+            elif hasattr(widget, 'canvas') and hasattr(widget, 'set') and hasattr(widget, 'config'):
+                # This might be a CustomScrollbar instance
+                try:
+                    widget.config(
+                        bg=theme['scrollbar_bg'] if 'scrollbar_bg' in theme else theme['button_bg'],
+                        fg=theme['scrollbar_fg'] if 'scrollbar_fg' in theme else theme['highlight_bg']
+                    )
+                except (tk.TclError, AttributeError):
+                    pass
+        except tk.TclError:
+            # Skip widgets that can't be configured
+            pass
+            
+        # Process children recursively
+        for child in widget.winfo_children():
+            self.apply_theme_to_widget(child, theme)
 
     def create_tooltip(self, widget, text):
         """Create a tooltip for a widget"""
@@ -118,48 +441,97 @@ class GameScreen:
 
     def setup_sidebar(self):
         # Turn information
-        self.turn_label = tk.Label(self.sidebar, text=f"Turn: {self.app.current_turn}")
-        self.turn_label.pack(pady=5)
+        self.sidebar_frame = tk.Frame(self.main_container, width=200, bg=self.current_theme['frame_bg'])
+        self.sidebar_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        self.sidebar_frame.pack_propagate(False)
         
-        # Core game buttons
-        self.next_turn_button = tk.Button(self.sidebar, text="Next Turn", command=self.on_next_turn)
-        self.next_turn_button.pack(pady=5)
+        # Turn label
+        self.turn_label = tk.Label(self.sidebar_frame, text=f"Turn: {self.app.current_turn}",
+                                  bg=self.current_theme['frame_bg'], fg=self.current_theme['fg'],
+                                  font=("Arial", 14, "bold"))
+        self.turn_label.pack(pady=(10, 5))
         
-        self.mode_button = tk.Button(self.sidebar, text="Switch to Erase Mode", command=self.toggle_mode)
-        self.mode_button.pack(pady=5)
+        # Next turn button
+        next_turn_btn = tk.Button(self.sidebar_frame, text="Next Turn", command=self.on_next_turn,
+                                 bg=self.current_theme['button_bg'], fg=self.current_theme['button_fg'],
+                                 activebackground=self.current_theme['highlight_bg'],
+                                 activeforeground=self.current_theme['highlight_fg'])
+        next_turn_btn.pack(pady=(0, 10))
         
-        self.undo_button = tk.Button(self.sidebar, text="Undo", command=self.undo)
-        self.undo_button.pack(pady=5)
+        # Mode toggle button
+        self.mode_toggle_btn = tk.Button(self.sidebar_frame, text="Toggle Mode (Color/City)", command=self.toggle_mode,
+                                       bg=self.current_theme['button_bg'], fg=self.current_theme['button_fg'],
+                                       activebackground=self.current_theme['highlight_bg'],
+                                       activeforeground=self.current_theme['highlight_fg'])
+        self.mode_toggle_btn.pack(pady=5)
         
-        # Add unit mode toggle if in Tregonia mode
-        if self.app.roll_mode == 'tregonia':
-            self.unit_mode_button = tk.Button(
-                self.sidebar,
-                text="Enter Unit Move Mode",
-                command=self.toggle_unit_mode
-            )
-            self.unit_mode_button.pack(pady=5)
-            
-            # Initially disable the button if there are no units
-            if not hasattr(self.app, 'units') or len(self.app.units) == 0:
-                self.unit_mode_button.config(state=tk.DISABLED)
-
-        # Player selection section
-        self.select_player_label = tk.Label(self.sidebar, text="Select Player:")
-        self.select_player_label.pack(pady=5)
+        # Undo button
+        self.undo_btn = tk.Button(self.sidebar_frame, text="Undo", command=self.undo,
+                                bg=self.current_theme['button_bg'], fg=self.current_theme['button_fg'],
+                                activebackground=self.current_theme['highlight_bg'],
+                                activeforeground=self.current_theme['highlight_fg'])
+        self.undo_btn.pack(pady=5)
+        
+        # Create player selection section
+        player_frame = tk.Frame(self.sidebar_frame, bg=self.current_theme['frame_bg'])
+        player_frame.pack(pady=10, fill=tk.X)
+        
+        player_label = tk.Label(player_frame, text="Select Player:",
+                              bg=self.current_theme['frame_bg'], fg=self.current_theme['fg'],
+                              font=("Arial", 12, "bold"))
+        player_label.pack(pady=(0, 5))
+        
+        # Player buttons
+        self.player_buttons_frame = tk.Frame(player_frame, bg=self.current_theme['frame_bg'])
+        self.player_buttons_frame.pack()
+        
+        # Add players buttons
         self.update_player_buttons()
-
-        # Resource painting section
-        tk.Label(self.sidebar, text="Resource Painting:").pack(pady=5)
-        self.resource_buttons = []
-        for resource_type in ['unactivated', 'gold', 'mana']:
-            btn = tk.Button(
-                self.sidebar,
-                text=resource_type.capitalize(),
-                command=lambda t=resource_type: self.select_resource_paint(t)
-            )
-            btn.pack(fill=tk.X, padx=5, pady=2)
-            self.resource_buttons.append(btn)
+        
+        # Toggle units button
+        if self.app.roll_mode == 'tregonia':
+            unit_frame = tk.Frame(self.sidebar_frame, bg=self.current_theme['frame_bg'])
+            unit_frame.pack(pady=10, fill=tk.X)
+            
+            unit_label = tk.Label(unit_frame, text="Units:",
+                                bg=self.current_theme['frame_bg'], fg=self.current_theme['fg'],
+                                font=("Arial", 12, "bold"))
+            unit_label.pack(pady=(0, 5))
+            
+            # Toggle unit mode button
+            self.unit_mode_button = tk.Button(unit_frame, text="Enter Unit Move Mode", command=self.toggle_unit_mode,
+                                          bg=self.current_theme['button_bg'], fg=self.current_theme['button_fg'],
+                                          activebackground=self.current_theme['highlight_bg'],
+                                          activeforeground=self.current_theme['highlight_fg'])
+            self.unit_mode_button.pack(pady=2)
+            
+            # Resource management (only in Tregonia mode)
+            resource_frame = tk.Frame(self.sidebar_frame, bg=self.current_theme['frame_bg'])
+            resource_frame.pack(pady=10, fill=tk.X)
+            
+            resource_label = tk.Label(resource_frame, text="Resources:",
+                                   bg=self.current_theme['frame_bg'], fg=self.current_theme['fg'],
+                                   font=("Arial", 12, "bold"))
+            resource_label.pack(pady=(0, 5))
+            
+            # Resource paint buttons
+            self.gold_btn = tk.Button(resource_frame, text="Gold", command=lambda: self.select_resource_paint('gold'),
+                                   bg=self.current_theme['button_bg'], fg=self.current_theme['button_fg'],
+                                   activebackground=self.current_theme['highlight_bg'],
+                                   activeforeground=self.current_theme['highlight_fg'])
+            self.gold_btn.pack(side=tk.LEFT, padx=2)
+            
+            self.mana_btn = tk.Button(resource_frame, text="Mana", command=lambda: self.select_resource_paint('mana'),
+                                   bg=self.current_theme['button_bg'], fg=self.current_theme['button_fg'],
+                                   activebackground=self.current_theme['highlight_bg'],
+                                   activeforeground=self.current_theme['highlight_fg'])
+            self.mana_btn.pack(side=tk.LEFT, padx=2)
+            
+            self.no_resource_btn = tk.Button(resource_frame, text="None", command=lambda: self.select_resource_paint(None),
+                                         bg=self.current_theme['button_bg'], fg=self.current_theme['button_fg'],
+                                         activebackground=self.current_theme['highlight_bg'],
+                                         activeforeground=self.current_theme['highlight_fg'])
+            self.no_resource_btn.pack(side=tk.LEFT, padx=2)
 
     def select_resource_paint(self, resource_type):
         """Handle resource paint button selection"""
@@ -177,290 +549,624 @@ class GameScreen:
 
     def highlight_resource_button(self):
         """Update button appearances based on selected resource type"""
-        for btn in self.resource_buttons:
+        for btn in self.gold_btn, self.mana_btn, self.no_resource_btn:
             if btn['text'].lower() == self.resource_paint_mode:
                 btn.config(relief=tk.SUNKEN)
             else:
                 btn.config(relief=tk.RAISED)
 
     def setup_canvas(self):
-        """Setup canvas with sliders and zoom controls"""
-        # Create main canvas frame
-        self.canvas_frame = tk.Frame(self.map_container)
-        self.canvas_frame.pack(fill=tk.BOTH, expand=True)
+        """Setup the canvas and scrollbars"""
+        canvas_frame = tk.Frame(self.main_container, bg=self.current_theme['bg'])
+        canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Create a frame for zoom controls
-        zoom_frame = tk.Frame(self.canvas_frame)
-        zoom_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+        # Create canvas
+        self.canvas = tk.Canvas(canvas_frame, bg=self.current_theme['canvas_bg'], highlightthickness=0)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Get scrollbar colors from theme
+        scroll_bg = self.current_theme.get('scrollbar_bg', self.current_theme['button_bg'])
+        scroll_fg = self.current_theme.get('scrollbar_fg', self.current_theme['highlight_bg'])
+        
+        # Create horizontal scrollbar - using CustomScrollbar with dark styling
+        self.h_scrollbar = CustomScrollbar(
+            canvas_frame, 
+            orientation="horizontal", 
+            command=self.canvas.xview,
+            bg=scroll_bg,
+            fg=scroll_fg,
+            width=12
+        )
+        self.h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.canvas.configure(xscrollcommand=self.h_scrollbar.set)
+        
+        # Create vertical scrollbar - using CustomScrollbar with dark styling
+        self.v_scrollbar = CustomScrollbar(
+            canvas_frame, 
+            orientation="vertical", 
+            command=self.canvas.yview,
+            bg=scroll_bg,
+            fg=scroll_fg,
+            width=12
+        )
+        self.v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.configure(yscrollcommand=self.v_scrollbar.set)
         
         # Add zoom buttons
-        self.zoom_out_btn = tk.Button(zoom_frame, text="-", command=self.zoom_out)
-        self.zoom_out_btn.pack(side=tk.LEFT, padx=5)
+        zoom_frame = tk.Frame(canvas_frame, bg=self.current_theme['bg'])
+        zoom_frame.pack(anchor=tk.SE, padx=5, pady=5)
         
-        self.zoom_in_btn = tk.Button(zoom_frame, text="+", command=self.zoom_in)
-        self.zoom_in_btn.pack(side=tk.LEFT, padx=5)
-        
-        # Create zoom level label
-        self.zoom_label = tk.Label(zoom_frame, text="100%")
+        # Add zoom label
+        self.zoom_label = tk.Label(zoom_frame, text="100%", bg=self.current_theme['bg'], fg=self.current_theme['fg'])
         self.zoom_label.pack(side=tk.LEFT, padx=5)
         
-        # Create canvas and scrollbars
-        self.canvas = tk.Canvas(self.canvas_frame, bg='grey')
-        self.h_scrollbar = tk.Scale(self.canvas_frame, orient=tk.HORIZONTAL, 
-                                from_=0, to=100, command=self.on_h_scroll)
-        self.v_scrollbar = tk.Scale(self.canvas_frame, orient=tk.VERTICAL, 
-                                from_=0, to=100, command=self.on_v_scroll)
+        zoom_in_btn = tk.Button(zoom_frame, text="+", command=self.zoom_in,
+                             bg=self.current_theme['button_bg'], fg=self.current_theme['button_fg'],
+                             activebackground=self.current_theme['highlight_bg'],
+                             activeforeground=self.current_theme['highlight_fg'],
+                             width=2, height=1)
+        zoom_in_btn.pack(side=tk.LEFT, padx=2)
         
-        # Pack canvas and scrollbars
-        self.v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        zoom_out_btn = tk.Button(zoom_frame, text="-", command=self.zoom_out,
+                              bg=self.current_theme['button_bg'], fg=self.current_theme['button_fg'],
+                              activebackground=self.current_theme['highlight_bg'],
+                              activeforeground=self.current_theme['highlight_fg'],
+                              width=2, height=1)
+        zoom_out_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Configure canvas for scrolling
+        self.canvas.configure(scrollregion=(0, 0, 1, 1))
 
-    def toggle_unit_mode(self):
-        """Toggle between unit movement mode and regular map editing mode"""
-        # Check if there are any units to move
-        if not hasattr(self.app, 'units') or len(self.app.units) == 0:
-            messagebox.showinfo("No Units", "There are no units on the map to move. Create units first.")
+    def on_h_scroll(self, *args):
+        """Handle horizontal scroll events"""
+        if len(args) == 1:
+            # This is from our custom scrollbar's direct movement
+            self.canvas.xview_moveto(float(args[0]))
+        else:
+            # This is from the standard scrollbar interface
+            self.canvas.xview(*args)
+
+    def on_v_scroll(self, *args):
+        """Handle vertical scroll events"""
+        if len(args) == 1:
+            # This is from our custom scrollbar's direct movement
+            self.canvas.yview_moveto(float(args[0]))
+        else:
+            # This is from the standard scrollbar interface
+            self.canvas.yview(*args)
+
+    def zoom_in(self):
+        """Handle zoom in button click"""
+        if not self.app.map_image:
             return
             
-        self.unit_mode = not self.unit_mode
-        print(f"\n=== Unit Mode Toggled ===")
-        print(f"Unit mode is now: {'ON' if self.unit_mode else 'OFF'}")
+        old_zoom = self.zoom_level
+        self.zoom_level = min(self.max_zoom, self.zoom_level * 1.2)
         
-        if self.unit_mode:
-            self.unit_mode_button.config(text="Exit Unit Move Mode")
-            self.mode_button.config(state=tk.DISABLED)
-            self.canvas.config(cursor="crosshair")
-        else:
-            self.unit_mode_button.config(text="Enter Unit Move Mode")
-            self.mode_button.config(state=tk.NORMAL)
-            self.canvas.config(cursor="")
-            self.selected_unit = None
-
-    def get_visible_region(self):
-        """Get the currently visible region of the map"""
-        if not self.app.map_image:
-            return None
+        if old_zoom != self.zoom_level:
+            # Update zoom label
+            zoom_percent = int(self.zoom_level * 100)
+            self.zoom_label.config(text=f"{zoom_percent}%")
             
-        # Get canvas dimensions
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
+            # Update display
+            self.display_map_image()
+
+    def zoom_out(self):
+        """Handle zoom out button click"""
+        if not self.app.map_image:
+            return
+            
+        old_zoom = self.zoom_level
+        self.zoom_level = max(self.min_zoom, self.zoom_level / 1.2)
         
-        # Get scroll position
-        x_view = self.canvas.xview()
-        y_view = self.canvas.yview()
+        if old_zoom != self.zoom_level:
+            # Update zoom label
+            zoom_percent = int(self.zoom_level * 100)
+            self.zoom_label.config(text=f"{zoom_percent}%")
+            
+            # Update display
+            self.display_map_image()
+
+    def display_map_image(self):
+        """Display the map image on the canvas"""
+        if self.app.map_image is None:
+            return
+            
+        print("Displaying map image")
+            
+        # Calculate the new dimensions based on zoom level
+        width = int(self.app.map_image.width * self.zoom_level)
+        height = int(self.app.map_image.height * self.zoom_level)
         
-        # Calculate visible coordinates based on scroll position and zoom
-        x1 = int(x_view[0] * self.app.map_image.width * self.zoom_level)
-        y1 = int(y_view[0] * self.app.map_image.height * self.zoom_level)
-        x2 = int(x_view[1] * self.app.map_image.width * self.zoom_level)
-        y2 = int(y_view[1] * self.app.map_image.height * self.zoom_level)
+        # Get base image
+        base_image = self.app.map_image.copy()
         
-        return (x1, y1, x2, y2)
-    
-    def get_required_tiles(self, visible_region):
-        """Calculate which tiles are needed for the current view"""
-        if not visible_region or not self.app.map_image:
-            return set()
+        # Get cities for the overlay
+        cities = []
+        if hasattr(self.sprite_manager, 'placed_sprites'):
+            cities = [sprite_info for sprite_info in self.sprite_manager.placed_sprites.values() 
+                    if sprite_info.sprite_type == 'city']
+            print(f"Found {len(cities)} cities for overlay")
+        
+        # Add the overlay before zooming
+        display_image = self.overlay_drawer.draw_overlay(
+            base_image,
+            self.app.players,
+            self.app.current_turn,
+            cities
+        )
+        
+        # Resize with overlay included
+        resized_img = display_image.resize((
+            int(display_image.width * self.zoom_level),
+            int(display_image.height * self.zoom_level)
+        ), Image.LANCZOS)
+        
+        # Convert to PhotoImage
+        self.map_photo = ImageTk.PhotoImage(resized_img)
+        
+        # Update canvas scrollregion
+        self.canvas.config(scrollregion=(0, 0, resized_img.width, resized_img.height))
+        
+        # Clear any existing unit-related canvas items
+        if hasattr(self, '_unit_canvas_items') and self._unit_canvas_items:
+            print(f"Clearing {len(self._unit_canvas_items)} existing unit canvas items")
+            for item_id in self._unit_canvas_items:
+                self.canvas.delete(item_id)
+        self._unit_canvas_items = []  # Reset unit canvas items list
+        
+        # Create or update the image on the canvas
+        if not hasattr(self, 'map_item') or self.map_item is None:
+            self.map_item = self.canvas.create_image(0, 0, anchor=tk.NW, image=self.map_photo)
+        else:
+            self.canvas.itemconfig(self.map_item, image=self.map_photo)
+        
+        # Draw units if in Tregonia mode
+        if self.app.roll_mode == 'tregonia' and hasattr(self.app, 'units'):
+            unit_count = len(self.app.units) if self.app.units else 0
+            print(f"Drawing {unit_count} units on map")
+            
+            # Force draw units every time
+            try:
+                self.draw_units()
+                print("Successfully drew units on map")
+            except Exception as e:
+                print(f"Error drawing units: {e}")
+        else:
+            print("Skipping unit drawing (not in Tregonia mode or no units)")
+            
+        # Update unit move button state
+        if hasattr(self, 'unit_mode_button'):
+            if not hasattr(self.app, 'units') or len(self.app.units) == 0:
+                self.unit_mode_button.config(state=tk.DISABLED)
+            else:
+                self.unit_mode_button.config(state=tk.NORMAL)
+                
+        # Force canvas update
+        self.canvas.update()
+
+    def recolor_sprite_from_data(self, sprite_image, color_data):
+        """Apply color data to a sprite image.
+        
+        Args:
+            sprite_image: PIL Image to recolor
+            color_data: Dictionary mapping target colors to replacement colors
+            
+        Returns:
+            Modified copy of the sprite image
+        """
+        # Create a copy of the sprite to modify
+        sprite_to_draw = sprite_image.copy()
+        pixels = sprite_to_draw.load()
+        width, height = sprite_to_draw.size
+        
+        # For each pixel in the sprite
+        for x in range(width):
+            for y in range(height):
+                pixel = pixels[x, y]
+                # Check if this pixel's color should be replaced
+                if pixel[:3] in color_data:
+                    new_color = color_data[pixel[:3]]
+                    if len(pixel) == 4:  # RGBA
+                        pixels[x, y] = (*new_color, pixel[3])  # Preserve alpha
+                    else:  # RGB
+                        pixels[x, y] = new_color
+                        
+        return sprite_to_draw
+
+    def draw_units(self):
+        """Draw units separately to avoid including them in tile cache"""
+        import tkinter.font as tkFont
+        from pyRisk.unit import DEFAULT_MAX_ARMY_SIZE, UnitType
+        
+        # Clear any existing unit canvas items
+        if hasattr(self, '_unit_canvas_items'):
+            for item_id in self._unit_canvas_items:
+                try:
+                    self.canvas.delete(item_id)
+                except:
+                    pass  # Item may have been deleted already
+        
+        # Reinitialize unit canvas items list
+        self._unit_canvas_items = []
+            
+        # Get visible region
+        visible_region = self.get_visible_region()
+        if not visible_region:
+            return
             
         x1, y1, x2, y2 = visible_region
         
-        # Convert to tile coordinates with proper rounding
-        start_tile_x = max(0, int(x1 / (self.tile_size * self.zoom_level)))
-        start_tile_y = max(0, int(y1 / (self.tile_size * self.zoom_level)))
-        end_tile_x = min(
-            self.app.map_image.width // self.tile_size,
-            int(x2 / (self.tile_size * self.zoom_level)) + 1
-        )
-        end_tile_y = min(
-            self.app.map_image.height // self.tile_size,
-            int(y2 / (self.tile_size * self.zoom_level)) + 1
-        )
-        
-        return {(x, y) for x in range(start_tile_x, end_tile_x + 1)
-                    for y in range(start_tile_y, end_tile_y + 1)}
-    
-    def render_tile(self, tile_x, tile_y):
-        """Render a single map tile"""
-        if not self.app.map_image:
-            return None
+        # Verify all units and fix any missing attributes
+        if hasattr(self.app, 'units'):
+            # Debug info
+            print(f"Drawing {len(self.app.units)} units")
             
-        # Calculate tile boundaries
-        x1 = tile_x * self.tile_size
-        y1 = tile_y * self.tile_size
-        x2 = min(x1 + self.tile_size, self.app.map_image.width)
-        y2 = min(y1 + self.tile_size, self.app.map_image.height)
+            # Create proper tkinter font objects
+            unit_font = tkFont.Font(family="Arial", size=int(12 * self.zoom_level))
+            count_font = tkFont.Font(family="Arial", size=int(10 * self.zoom_level), weight="bold")
+
+            # Process each unit
+            for unit in self.app.units:
+                # Skip units without position
+                if not hasattr(unit, 'position') or unit.position is None:
+                    continue
+                
+                # Debug info for this unit
+                print(f"Processing unit {unit.unit_id} at position {unit.position}")
+                
+                # Set is_army property if missing
+                if not hasattr(unit, 'is_army'):
+                    unit.is_army = len(getattr(unit, 'sub_units', [])) > 0
+                
+                # Set max_army_size for armies if missing
+                if getattr(unit, 'is_army', False) and not hasattr(unit, 'max_army_size'):
+                    unit.max_army_size = DEFAULT_MAX_ARMY_SIZE
+                    print(f"Set missing max_army_size={DEFAULT_MAX_ARMY_SIZE} for army {unit.unit_id}")
+                
+                # Convert unit position to canvas coordinates
+                x, y = [int(coord * self.zoom_level) for coord in unit.position]
+                
+                # Skip if unit is not in visible region
+                if not (x1 <= x <= x2 and y1 <= y <= y2):
+                    continue
+                
+                # Get owner and color
+                owner = None
+                if hasattr(unit, 'owner'):
+                    owner = next((p for p in self.app.players if p.name == unit.owner), None)
+                owner_color = owner.color if owner else (128, 128, 128)
+                
+                # Check if unit is rooted
+                is_rooted = False
+                # Check if this is a Treant with rooted property
+                if hasattr(unit, 'unit_type') and hasattr(unit, 'special_properties'):
+                    if unit.unit_type == UnitType.TREANT and "rooted" in unit.special_properties:
+                        is_rooted = True
+                
+                # Check if this is an army containing a rooted Treant
+                if getattr(unit, 'is_army', False) and hasattr(unit, 'sub_units'):
+                    for sub_unit in unit.sub_units:
+                        if (hasattr(sub_unit, 'unit_type') and 
+                            hasattr(sub_unit, 'special_properties') and
+                            sub_unit.unit_type == UnitType.TREANT and 
+                            "rooted" in sub_unit.special_properties):
+                            is_rooted = True
+                            break
+                
+                # Use dark gray for rooted units, white for others
+                fill_color = '#808080' if is_rooted else '#FFFFFF'
+                
+                # Draw unit rectangle
+                rect_id = self.canvas.create_rectangle(
+                    x - 3, y - 3, x + 23, y + 23,
+                    fill=fill_color, outline='black',
+                    tags=(f"unit_{unit.unit_id}" if hasattr(unit, 'unit_id') else "unit")
+                )
+                self._unit_canvas_items.append(rect_id)
+                
+                # Draw army capacity info for armies
+                if getattr(unit, 'is_army', False) and hasattr(unit, 'sub_units'):
+                    # Get army size info
+                    sub_unit_count = len(unit.sub_units)
+                    max_size = getattr(unit, 'max_army_size', DEFAULT_MAX_ARMY_SIZE)
+                    
+                    # Format as n/max
+                    count_text = f"{sub_unit_count}/{max_size}"
+                    print(f"Army {unit.unit_id} count: {count_text}")
+                    
+                    # Draw white background for capacity text
+                    capacity_bg_id = self.canvas.create_rectangle(
+                        x - 5, y - 20, 
+                        x + 25, y - 4,
+                        fill="white",
+                        outline="black",
+                        width=1,
+                        tags=f"unit_{unit.unit_id}_capacity_bg"
+                    )
+                    self._unit_canvas_items.append(capacity_bg_id)
+                    
+                    # Draw capacity text
+                    capacity_text_id = self.canvas.create_text(
+                        x + 10, y - 12,
+                        text=count_text,
+                        font=count_font,
+                        fill="black",
+                        tags=f"unit_{unit.unit_id}_capacity"
+                    )
+                    self._unit_canvas_items.append(capacity_text_id)
+                
+                # Draw unit ID
+                if hasattr(unit, 'unit_id'):
+                    # Draw white outline
+                    outline_id = self.canvas.create_text(
+                        x + 10, y + 10,
+                        text=str(unit.unit_id),
+                        font=unit_font,
+                        fill="white",
+                        tags=f"unit_{unit.unit_id}_outline"
+                    )
+                    self._unit_canvas_items.append(outline_id)
+                    
+                    # Draw black text on top
+                    text_id = self.canvas.create_text(
+                        x + 10, y + 10,
+                        text=str(unit.unit_id),
+                        font=unit_font,
+                        fill="black",
+                        tags=f"unit_{unit.unit_id}_text"
+                    )
+                    self._unit_canvas_items.append(text_id)
+                
+                # Draw owner color bar
+                hex_color = '#{:02x}{:02x}{:02x}'.format(*owner_color)
+                color_bar_id = self.canvas.create_rectangle(
+                    x - 3, y + 24, x + 23, y + 28,
+                    fill=hex_color,
+                    outline='black',
+                    tags=f"unit_{unit.unit_id}_color"
+                )
+                self._unit_canvas_items.append(color_bar_id)
+                
+                # Draw rooted indicator if applicable
+                if is_rooted:
+                    root_id = self.canvas.create_line(
+                        x - 3, y + 29, x + 23, y + 29,
+                        fill='brown', width=2,
+                        tags=f"unit_{unit.unit_id}_root"
+                    )
+                    self._unit_canvas_items.append(root_id)
         
-        # Create tile image
-        tile = Image.new('RGBA', (self.tile_size, self.tile_size), (0, 0, 0, 0))
+        # Update the canvas
+        self.canvas.update_idletasks()
+
+    def update_player_buttons(self):
+        # Clear existing buttons
+        for widget in self.player_buttons_frame.winfo_children():
+            widget.destroy()
         
-        # Copy base map portion
-        map_region = self.app.map_image.crop((x1, y1, x2, y2))
-        tile.paste(map_region, (0, 0))
+        # Create new buttons
+        self.player_buttons = []
+        for i, player in enumerate(self.app.players):
+            btn = tk.Button(
+                self.player_buttons_frame,
+                text=player.name,
+                bg=f"#{player.color[0]:02x}{player.color[1]:02x}{player.color[2]:02x}",
+                fg='white' if sum(player.color) < 380 else 'black',
+                command=lambda p=player: self.select_player(p),
+                width=10,
+                relief=tk.RAISED
+            )
+            btn.grid(row=i // 2, column=i % 2, padx=2, pady=2)
+            self.player_buttons.append((btn, player))
         
-        # Draw owned territories
-        draw = ImageDraw.Draw(tile)
-        for (x, y), owner in self.app.tile_owners.items():
-            if (x1 <= x < x2) and (y1 <= y < y2):
-                if owner:
-                    player = next((p for p in self.app.players if p.name == owner), None)
-                    if player:
-                        draw.point((x - x1, y - y1), fill=player.color)
+        # Add a button to add a new player
+        add_btn = tk.Button(
+            self.player_buttons_frame,
+            text="+",
+            bg=self.current_theme['button_bg'],
+            fg=self.current_theme['button_fg'],
+            command=self.add_new_player,
+            width=2
+        )
+        add_btn.grid(row=(len(self.app.players) + 1) // 2, column=(len(self.app.players) % 2), padx=2, pady=2)
         
-        # Draw sprites
-        for pos, sprite_info in self.sprite_manager.placed_sprites.items():
-            sprite_x, sprite_y = pos
-            if (x1 <= sprite_x < x2) and (y1 <= sprite_y < y2):
-                sprite_image = self.sprite_manager.sprites.get(sprite_info.sprite_type)
-                if sprite_image:
-                    paste_x = sprite_x - x1 - sprite_image.width // 2
-                    paste_y = sprite_y - y1 - sprite_image.height // 2
-                    tile.paste(sprite_image, (paste_x, paste_y), sprite_image)
-        
-        return tile
+        # Highlight selected player if any
+        self.highlight_selected_player_button()
+
+    def select_player(self, player):
+        """Handle player selection"""
+        # If selecting a player, disable resource paint mode
+        if self.resource_paint_mode is not None:
+            self.resource_paint_mode = None
+            self.highlight_resource_button()
+            
+        self.app.selected_player = player
+        self.highlight_selected_player_button()
+
+    def highlight_selected_player_button(self):
+        for btn, _ in self.player_buttons:
+            if self.app.selected_player and btn['text'] == self.app.selected_player.name:
+                btn.config(relief=tk.SUNKEN)
+            else:
+                btn.config(relief=tk.RAISED)
+
+    def bind_events(self):
+        """Bind required events"""
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<Button-3>", self.on_canvas_right_click)  # Right click
 
     def on_canvas_right_click(self, event):
         """Handle right-click on canvas"""
-        if not self.app.map_image:
-            return
-
-        # Convert canvas coordinates to original image coordinates
-        canvas_x = self.canvas.canvasx(event.x)
-        canvas_y = self.canvas.canvasy(event.y)
+        # Get mouse position
+        x, y = event.x, event.y
         
-        # Calculate image coordinates without relying on bbox
-        x = int(canvas_x / self.zoom_level)
-        y = int(canvas_y / self.zoom_level)
+        # Convert canvas coordinates to actual map coordinates based on scrolling and zoom
+        x = int(self.canvas.canvasx(x) / self.zoom_level)
+        y = int(self.canvas.canvasy(y) / self.zoom_level)
         
-        # Check if click is within image bounds
-        if (x < 0 or y < 0 or 
-            x >= self.app.map_image.width or 
-            y >= self.app.map_image.height):
-            return
-
-        # Check for unit at this location first (if in Tregonia mode)
+        print(f"Right-click detected at position ({x}, {y})")
+        
+        # Check if we clicked on a unit
+        clicked_unit = None
         if self.app.roll_mode == 'tregonia':
-            clicked_unit = None
             for unit in self.app.units:
                 if unit.position:
                     unit_x, unit_y = unit.position
-                    # Define a click radius
+                    # Define a click radius for selection (20 pixels)
                     if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
                         clicked_unit = unit
+                        print(f"Clicked on unit: {unit.unit_id}")
                         break
-            
-            if clicked_unit:
-                self.show_unit_popup(event, clicked_unit)
-                return
-
-        # Check for existing sprite at this location with radius check
-        sprite_result = self.sprite_manager.get_sprite_at_position(x, y)
-        existing_sprite = None
-        sprite_pos = None
-        if sprite_result is not None:
-            sprite_pos, existing_sprite = sprite_result
         
-        # Create popup menu
-        popup = tk.Menu(self.canvas, tearoff=0)
-        
-        if existing_sprite:
-            # Options for existing sprite
-            popup.add_command(
-                label=f"Remove {existing_sprite.sprite_type}",
-                command=lambda: self.sprite_manager.remove_sprite(sprite_pos)
-            )
-        else:
-            # Add army placement option if in Tregonia mode
-            if self.app.roll_mode == 'tregonia':
-                if self.app.players:
-                    # Create a cascading menu for placing armies
-                    armies_menu = tk.Menu(popup, tearoff=0)
-                    popup.add_cascade(label="Place Army", menu=armies_menu)
-                    
-                    # Add an option for each player
-                    for player in self.app.players:
-                        armies_menu.add_command(
-                            label=f"For {player.name}",
-                            command=lambda p=player, pos=(x, y): self.place_army_at_position(p, pos)
-                        )
-                else:
-                    popup.add_command(
-                        label="Place Army (Add players first)",
-                        state=tk.DISABLED
-                    )
+        # If we clicked on a unit, show unit popup menu instead
+        if clicked_unit:
+            print("Showing unit popup menu")
+            self.show_unit_popup(event, clicked_unit)
+            return
             
-            # Add sprite placement options
+        # Create context menu with theme styling
+        context_menu = tk.Menu(self.canvas, tearoff=0,
+                          bg=self.current_theme['menu_bg'],
+                          fg=self.current_theme['menu_fg'],
+                          activebackground=self.current_theme['highlight_bg'],
+                          activeforeground=self.current_theme['highlight_fg'])
+                          
+        # Add position information
+        context_menu.add_command(
+            label=f"Position: ({x}, {y})",
+            state=tk.DISABLED
+        )
+        context_menu.add_separator()
+        
+        # === ARMY PLACEMENT SECTION ===
+        if self.app.roll_mode == 'tregonia':
             if self.app.selected_player:
-                # Create cascading menu for different sprite categories
-                structures_menu = tk.Menu(popup, tearoff=0)
-                popup.add_cascade(label="Place Structure", menu=structures_menu)
-                
-                # Cities and Infrastructure
-                structures_menu.add_command(label="City", 
-                    command=lambda: self.place_city(x, y))
-                structures_menu.add_command(label="Trading Post", 
-                    command=lambda: self.sprite_manager.add_sprite('trading_post', (x, y)))
-                structures_menu.add_command(label="Embassy", 
-                    command=lambda: self.sprite_manager.add_sprite('embassy', (x, y)))
-                
-                # Resource Buildings
-                resources_menu = tk.Menu(popup, tearoff=0)
-                structures_menu.add_cascade(label="Resource Buildings", menu=resources_menu)
-                resources_menu.add_command(label="Farm", 
-                    command=lambda: self.sprite_manager.add_sprite('farm', (x, y)))
-                resources_menu.add_command(label="Mine", 
-                    command=lambda: self.sprite_manager.add_sprite('mine', (x, y)))
-                resources_menu.add_command(label="Workshop", 
-                    command=lambda: self.sprite_manager.add_sprite('workshop', (x, y)))
-                
-                # Military Structures
-                military_menu = tk.Menu(popup, tearoff=0)
-                structures_menu.add_cascade(label="Military Structures", menu=military_menu)
-                military_menu.add_command(label="Fort (Stage 1)", 
-                    command=lambda: self.sprite_manager.add_sprite('fort_1', (x, y)))
-                military_menu.add_command(label="Fort (Stage 2)", 
-                    command=lambda: self.sprite_manager.add_sprite('fort_2', (x, y)))
-                military_menu.add_command(label="Fort (Stage 3)", 
-                    command=lambda: self.sprite_manager.add_sprite('fort_3', (x, y)))
-                military_menu.add_command(label="Wall (Stage 1)", 
-                    command=lambda: self.sprite_manager.add_sprite('wall_1', (x, y)))
-                military_menu.add_command(label="Wall (Stage 2)", 
-                    command=lambda: self.sprite_manager.add_sprite('wall_2', (x, y)))
-                
-                # Magical/Religious Structures
-                magical_menu = tk.Menu(popup, tearoff=0)
-                structures_menu.add_cascade(label="Magical/Religious", menu=magical_menu)
-                magical_menu.add_command(label="Shrine (Stage 1)", 
-                    command=lambda: self.sprite_manager.add_sprite('shrine_1', (x, y)))
-                magical_menu.add_command(label="Shrine (Stage 2)", 
-                    command=lambda: self.sprite_manager.add_sprite('shrine_2', (x, y)))
-                magical_menu.add_command(label="Monastery", 
-                    command=lambda: self.sprite_manager.add_sprite('monastery', (x, y)))
-                magical_menu.add_command(label="Observatory", 
-                    command=lambda: self.sprite_manager.add_sprite('observatory', (x, y)))
-                magical_menu.add_command(label="Research Lab", 
-                    command=lambda: self.sprite_manager.add_sprite('research_lab', (x, y)))
-                magical_menu.add_command(label="Henge", 
-                    command=lambda: self.sprite_manager.add_sprite('henge', (x, y)))
-                
-                # Transport/Infrastructure
-                transport_menu = tk.Menu(popup, tearoff=0)
-                structures_menu.add_cascade(label="Transport", menu=transport_menu)
-                transport_menu.add_command(label="Bridge", 
-                    command=lambda: self.sprite_manager.add_sprite('bridge', (x, y)))
-                transport_menu.add_command(label="Tunnel (Stage 1)", 
-                    command=lambda: self.sprite_manager.add_sprite('tunnel_1', (x, y)))
-                transport_menu.add_command(label="Tunnel (Stage 2)", 
-                    command=lambda: self.sprite_manager.add_sprite('tunnel_2', (x, y)))
-                transport_menu.add_command(label="Waystone", 
-                    command=lambda: self.sprite_manager.add_sprite('waystone', (x, y)))
+                context_menu.add_command(
+                    label=f"Place Army for {self.app.selected_player.name}",
+                    command=lambda: self.place_army_at_position(self.app.selected_player, (x, y))
+                )
+                print("Added 'Place Army' option")
             else:
-                popup.add_command(
-                    label="Place Structure (Select a player first)",
+                context_menu.add_command(
+                    label="Place Army (Select a player first)",
                     state=tk.DISABLED
                 )
+            
+            context_menu.add_separator()
+            
+        # === CITY SECTION ===
+        # Add city placement option
+        if self.app.selected_player:
+            context_menu.add_command(
+                label=f"Place City for {self.app.selected_player.name}",
+                command=lambda: self.place_city(x, y)
+            )
+            print("Added 'Place City' option")
+        else:
+            context_menu.add_command(
+                label="Place City (Select a player first)",
+                state=tk.DISABLED
+            )
         
-        popup.tk_popup(event.x_root, event.y_root)
+        # === STRUCTURES SECTION ===
+        context_menu.add_separator()
+        context_menu.add_command(label="Place Structure:", state=tk.DISABLED)
+        
+        # Force load sprites if not already loaded
+        if not hasattr(self.sprite_manager, 'sprites') or not self.sprite_manager.sprites:
+            print("Loading sprites...")
+            self.sprite_manager.load_sprites()
+            
+        # Get all available sprites
+        all_sprites = list(self.sprite_manager.sprites.keys())
+        print(f"Available sprites: {all_sprites}")
+        
+        # Group sprites by type
+        structure_sprites = []
+        transport_sprites = []
+        defense_sprites = []
+        other_sprites = []
+        
+        # Categorize sprites (skip city and map_cut)
+        for sprite_name in all_sprites:
+            if sprite_name in ['city', 'map_cut']:
+                continue
+            elif sprite_name in ['bridge', 'bridge_big', 'tunnel_1', 'tunnel_2', 'waystone']:
+                transport_sprites.append(sprite_name)
+            elif sprite_name in ['fort_1', 'fort_2', 'fort_3', 'wall_1', 'wall_2', 'tower']:
+                defense_sprites.append(sprite_name)
+            elif sprite_name in ['farm', 'farm_big', 'mine', 'observatory', 'research_lab', 'trading_post', 'workshop']:
+                structure_sprites.append(sprite_name)
+            else:
+                other_sprites.append(sprite_name)
+                
+        # Create structure submenu
+        if structure_sprites:
+            structures_menu = tk.Menu(context_menu, tearoff=0,
+                              bg=self.current_theme['menu_bg'],
+                              fg=self.current_theme['menu_fg'],
+                              activebackground=self.current_theme['highlight_bg'],
+                              activeforeground=self.current_theme['highlight_fg'])
+            context_menu.add_cascade(label="Economy Structures", menu=structures_menu)
+            
+            for sprite in sorted(structure_sprites):
+                structures_menu.add_command(
+                    label=f"{sprite.title().replace('_', ' ')}",
+                    command=lambda s=sprite: self.place_sprite(s, x, y)
+                )
+                print(f"Added option to place {sprite}")
+                
+        # Create defense submenu
+        if defense_sprites:
+            defense_menu = tk.Menu(context_menu, tearoff=0,
+                              bg=self.current_theme['menu_bg'],
+                              fg=self.current_theme['menu_fg'],
+                              activebackground=self.current_theme['highlight_bg'],
+                              activeforeground=self.current_theme['highlight_fg'])
+            context_menu.add_cascade(label="Defensive Structures", menu=defense_menu)
+            
+            for sprite in sorted(defense_sprites):
+                defense_menu.add_command(
+                    label=f"{sprite.title().replace('_', ' ')}",
+                    command=lambda s=sprite: self.place_sprite(s, x, y)
+                )
+                print(f"Added option to place {sprite}")
+                
+        # Create transport submenu
+        if transport_sprites:
+            transport_menu = tk.Menu(context_menu, tearoff=0,
+                              bg=self.current_theme['menu_bg'],
+                              fg=self.current_theme['menu_fg'],
+                              activebackground=self.current_theme['highlight_bg'],
+                              activeforeground=self.current_theme['highlight_fg'])
+            context_menu.add_cascade(label="Transport Structures", menu=transport_menu)
+            
+            for sprite in sorted(transport_sprites):
+                transport_menu.add_command(
+                    label=f"{sprite.title().replace('_', ' ')}",
+                    command=lambda s=sprite: self.place_sprite(s, x, y)
+                )
+                print(f"Added option to place {sprite}")
+                
+        # Add other sprites directly to menu
+        if other_sprites:
+            context_menu.add_separator()
+            context_menu.add_command(label="Other Structures:", state=tk.DISABLED)
+            
+            for sprite in sorted(other_sprites):
+                context_menu.add_command(
+                    label=f"   {sprite.title().replace('_', ' ')}",
+                    command=lambda s=sprite: self.place_sprite(s, x, y)
+                )
+                print(f"Added option to place {sprite}")
+        
+        # Show menu at mouse position
+        try:
+            context_menu.tk_popup(event.x_root, event.y_root)
+            print("Displayed context menu")
+        except Exception as e:
+            print(f"Error showing context menu: {e}")
 
     def place_city(self, x, y):
         """Place a city with a name prompt and color it with the player's color"""
@@ -519,372 +1225,95 @@ class GameScreen:
                     # Update display
                     self.display_map_image()
 
-    def display_map_image(self):
-        """Display the map image with current zoom level and overlay"""
-        if self.app.map_image is None:
-            return
-
-        # Check if we need to regenerate the full image
-        regenerate_full_image = (
-            not hasattr(self, '_last_map_state') or
-            not hasattr(self, '_cached_base_image') or
-            self._last_map_state != {
-                'map_id': id(self.app.map_image),
-                'tile_owners': frozenset(self.app.tile_owners.items()),
-                'sprites': frozenset((pos, sprite.sprite_type, sprite.owner, id(sprite.extra_data)) 
-                                    for pos, sprite in self.sprite_manager.placed_sprites.items())
-            }
+    def get_visible_region(self):
+        """Get the currently visible region of the map"""
+        if not self.app.map_image:
+            return None
+            
+        # Get canvas dimensions
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Get scroll position
+        x_view = self.canvas.xview()
+        y_view = self.canvas.yview()
+        
+        # Calculate visible coordinates based on scroll position and zoom
+        x1 = int(x_view[0] * self.app.map_image.width * self.zoom_level)
+        y1 = int(y_view[0] * self.app.map_image.height * self.zoom_level)
+        x2 = int(x_view[1] * self.app.map_image.width * self.zoom_level)
+        y2 = int(y_view[1] * self.app.map_image.height * self.zoom_level)
+        
+        return (x1, y1, x2, y2)
+    
+    def get_required_tiles(self, visible_region):
+        """Get the tile coordinates needed to render the visible region"""
+        vx1, vy1, vx2, vy2 = visible_region
+        
+        # Calculate tile coordinates based on visible region and tile size
+        # Adjust for zoom level to get correct tile indices
+        start_tile_x = max(0, int(vx1 / (self.tile_size * self.zoom_level)))
+        start_tile_y = max(0, int(vy1 / (self.tile_size * self.zoom_level)))
+        
+        # Ensure we don't go beyond the map dimensions
+        end_tile_x = min(
+            self.app.map_image.width // self.tile_size,
+            int(vx2 / (self.tile_size * self.zoom_level)) + 1
+        )
+        end_tile_y = min(
+            self.app.map_image.height // self.tile_size,
+            int(vy2 / (self.tile_size * self.zoom_level)) + 1
         )
         
-        if regenerate_full_image:
-            # Create working copy of the map
-            display_image = self.app.map_image.copy()
+        return (start_tile_x, start_tile_y, end_tile_x, end_tile_y)
+    
+    def render_tile(self, tile_x, tile_y):
+        """Render a single map tile"""
+        if not self.app.map_image:
+            return None
             
-            # Draw territory
-            draw = ImageDraw.Draw(display_image)
-            for (x, y), owner in self.app.tile_owners.items():
+        # Calculate tile boundaries
+        x1 = tile_x * self.tile_size
+        y1 = tile_y * self.tile_size
+        x2 = min(x1 + self.tile_size, self.app.map_image.width)
+        y2 = min(y1 + self.tile_size, self.app.map_image.height)
+        
+        # Create tile image
+        tile = Image.new('RGBA', (self.tile_size, self.tile_size), (0, 0, 0, 0))
+        
+        # Copy base map portion
+        map_region = self.app.map_image.crop((x1, y1, x2, y2))
+        tile.paste(map_region, (0, 0))
+        
+        # Draw owned territories
+        draw = ImageDraw.Draw(tile)
+        for (x, y), owner in self.app.tile_owners.items():
+            if (x1 <= x < x2) and (y1 <= y < y2):
                 if owner:
                     player = next((p for p in self.app.players if p.name == owner), None)
                     if player:
-                        draw.point((x, y), fill=player.color)
-            
-            # Load font for city names
-            try:
-                name_font = ImageFont.truetype("arial.ttf", 12)
-            except IOError:
-                name_font = ImageFont.load_default()
-            
-            # Draw sprites (including cities)
-            for pos, sprite_info in self.sprite_manager.placed_sprites.items():
-                sprite_x, sprite_y = pos
-                sprite_image = self.sprite_manager.sprites.get(sprite_info.sprite_type)
-                if sprite_image:
-                    # Check if we have a pre-colored sprite
-                    if 'colored_sprite' in sprite_info.extra_data:
-                        sprite_to_draw = sprite_info.extra_data['colored_sprite']
+                        draw.point((x - x1, y - y1), fill=player.color)
+        
+        # Draw sprites with better error handling and colored sprite support
+        for pos, sprite_info in self.sprite_manager.placed_sprites.items():
+            sprite_x, sprite_y = pos
+            if (x1 <= sprite_x < x2) and (y1 <= sprite_y < y2):
+                try:
+                    # Try to get a pre-colored sprite first
+                    if hasattr(sprite_info, 'extra_data') and sprite_info.extra_data and 'colored_sprite' in sprite_info.extra_data:
+                        sprite_image = sprite_info.extra_data['colored_sprite']
                     else:
-                        # Use original sprite
-                        sprite_to_draw = sprite_image.copy()
+                        # Fall back to the original sprite
+                        sprite_image = self.sprite_manager.sprites.get(sprite_info.sprite_type)
                     
-                    # Calculate paste position
-                    paste_x = sprite_x - sprite_to_draw.width // 2
-                    paste_y = sprite_y - sprite_to_draw.height // 2
-                    
-                    # Ensure sprite is in RGBA mode for proper transparency
-                    if sprite_to_draw.mode != 'RGBA':
-                        sprite_to_draw = sprite_to_draw.convert('RGBA')
-                    
-                    # Paste the sprite with transparency mask
-                    display_image.paste(sprite_to_draw, (paste_x, paste_y), sprite_to_draw)
-                    
-                    # Draw name if it's a city
-                    if sprite_info.sprite_type == 'city':
-                        # Get city name from extra_data
-                        city_name = sprite_info.extra_data.get('name', 'Unnamed City')
-                        
-                        # Calculate text size for centering
-                        text_bbox = draw.textbbox((0, 0), city_name, font=name_font)
-                        text_width = text_bbox[2] - text_bbox[0]
-                        
-                        # Position text centered below the sprite
-                        text_x = sprite_x - text_width // 2
-                        text_y = paste_y + sprite_image.height + 2
-                        
-                        # Draw text outline (black)
-                        outline_positions = [
-                            (-1, -1), (0, -1), (1, -1),
-                            (-1, 0),           (1, 0),
-                            (-1, 1),  (0, 1),  (1, 1)
-                        ]
-                        for dx, dy in outline_positions:
-                            draw.text((text_x + dx, text_y + dy), city_name, 
-                                    font=name_font, fill=(0, 0, 0))
-                        
-                        # Draw main text (white)
-                        draw.text((text_x, text_y), city_name, 
-                                font=name_font, fill=(255, 255, 255))
-            
-            # Cache the base image without units and overlay
-            self._cached_base_image = display_image.copy()
-            
-            # Update the state tracking
-            self._last_map_state = {
-                'map_id': id(self.app.map_image),
-                'tile_owners': frozenset(self.app.tile_owners.items()),
-                'sprites': frozenset((pos, sprite.sprite_type, sprite.owner, id(sprite.extra_data)) 
-                                    for pos, sprite in self.sprite_manager.placed_sprites.items())
-            }
-        else:
-            # Use the cached base image
-            display_image = self._cached_base_image.copy()
+                    if sprite_image:
+                        paste_x = sprite_x - x1 - sprite_image.width // 2
+                        paste_y = sprite_y - y1 - sprite_image.height // 2
+                        tile.paste(sprite_image, (paste_x, paste_y), sprite_image)
+                except Exception as e:
+                    print(f"Error rendering sprite at {pos}: {e}")
         
-        # Draw units if in Tregonia mode - always do this part as units move frequently
-        if self.app.roll_mode == 'tregonia':
-            draw = ImageDraw.Draw(display_image)
-            try:
-                unit_font = ImageFont.truetype("arial.ttf", int(16))
-            except IOError:
-                unit_font = ImageFont.load_default()
-                    
-            for unit in self.app.units:
-                if unit.position:
-                    x, y = unit.position
-                    owner = next((p for p in self.app.players if p.name == unit.owner), None)
-                    owner_color = owner.color if owner else (128, 128, 128)
-                    
-                    # Draw unit directly on canvas
-                    # Check if unit is rooted
-                    is_rooted = False
-                    if unit.unit_type == UnitType.TREANT and "rooted" in unit.special_properties:
-                        is_rooted = True
-                    elif unit.is_army:
-                        for sub_unit in unit.sub_units:
-                            if sub_unit.unit_type == UnitType.TREANT and "rooted" in sub_unit.special_properties:
-                                is_rooted = True
-                                break
-                    
-                    # Use dark gray for rooted units, white for others
-                    fill_color = (128, 128, 128) if is_rooted else (255, 255, 255)
-                    
-                    # Draw unit rectangle
-                    draw.rectangle(
-                        [x - 3, y - 3, x + 23, y + 23],
-                        fill=fill_color, outline='black'
-                    )
-                    # Draw unit ID
-                    draw.text(
-                        (x + 10, y + 10),
-                        str(unit.unit_id),
-                        font=unit_font,
-                        fill='black',
-                        anchor='mm'
-                    )
-                    # Draw owner color bar
-                    draw.rectangle(
-                        [x - 3, y + 24, x + 23, y + 28],
-                        fill=owner_color,
-                        outline='black'
-                    )
-        
-        # Get cities for the overlay
-        cities = [sprite_info for sprite_info in self.sprite_manager.placed_sprites.values() 
-                if sprite_info.sprite_type == 'city']
-        
-        # Add the overlay before zooming
-        display_image = self.overlay_drawer.draw_overlay(
-            display_image,
-            self.app.players,
-            self.app.current_turn,
-            cities
-        )
-        
-        # Apply zoom if needed
-        if self.zoom_level != 1.0:
-            new_size = (
-                int(round(display_image.width * self.zoom_level)),
-                int(round(display_image.height * self.zoom_level))
-            )
-            resampling = Image.Resampling.LANCZOS if self.zoom_level > 1.0 else Image.Resampling.BILINEAR
-            display_image = display_image.resize(new_size, resampling)
-
-        # Update the display
-        self.map_photo = ImageTk.PhotoImage(display_image)
-        
-        # Clear canvas and create new image
-        self.canvas.delete("all")
-        self.map_item = self.canvas.create_image(0, 0, image=self.map_photo, anchor=tk.NW)
-
-        # Update scroll region
-        self.canvas.config(scrollregion=(0, 0, display_image.width, display_image.height))
-
-    def recolor_sprite_from_data(self, sprite_image, color_data):
-        """Apply color data to a sprite image.
-        
-        Args:
-            sprite_image: PIL Image to recolor
-            color_data: Dictionary mapping target colors to replacement colors
-            
-        Returns:
-            Modified copy of the sprite image
-        """
-        # Create a copy of the sprite to modify
-        sprite_to_draw = sprite_image.copy()
-        pixels = sprite_to_draw.load()
-        width, height = sprite_to_draw.size
-        
-        # For each pixel in the sprite
-        for x in range(width):
-            for y in range(height):
-                pixel = pixels[x, y]
-                # Check if this pixel's color should be replaced
-                if pixel[:3] in color_data:
-                    new_color = color_data[pixel[:3]]
-                    if len(pixel) == 4:  # RGBA
-                        pixels[x, y] = (*new_color, pixel[3])  # Preserve alpha
-                    else:  # RGB
-                        pixels[x, y] = new_color
-                        
-        return sprite_to_draw
-
-    def draw_units(self):
-        """Draw units separately to avoid including them in tile cache"""
-        visible_region = self.get_visible_region()
-        if not visible_region:
-            return
-            
-        x1, y1, x2, y2 = visible_region
-        
-        try:
-            unit_font = ImageFont.truetype("arial.ttf", int(16 * self.zoom_level))
-        except IOError:
-            unit_font = ImageFont.load_default()
-
-        for unit in self.app.units:
-            if unit.position:
-                x, y = [int(coord * self.zoom_level) for coord in unit.position]
-                
-                # Skip if unit is not in visible region
-                if not (x1 <= x <= x2 and y1 <= y <= y2):
-                    continue
-                    
-                owner = next((p for p in self.app.players if p.name == unit.owner), None)
-                owner_color = owner.color if owner else (128, 128, 128)
-                
-                # Draw unit directly on canvas
-                # Check if unit is rooted
-                is_rooted = False
-                if unit.unit_type == UnitType.TREANT and "rooted" in unit.special_properties:
-                    is_rooted = True
-                elif unit.is_army:
-                    for sub_unit in unit.sub_units:
-                        if sub_unit.unit_type == UnitType.TREANT and "rooted" in sub_unit.special_properties:
-                            is_rooted = True
-                            break
-                
-                # Use dark gray for rooted units, white for others
-                fill_color = (128, 128, 128) if is_rooted else (255, 255, 255)
-                
-                # Draw unit rectangle
-                draw.rectangle(
-                    [x - 3, y - 3, x + 23, y + 23],
-                    fill=fill_color, outline='black'
-                )
-                # Draw unit ID
-                draw.text(
-                    (x + 10, y + 10),
-                    str(unit.unit_id),
-                    font=unit_font,
-                    fill='black',
-                    anchor='mm'
-                )
-                # Draw owner color bar
-                draw.rectangle(
-                    [x - 3, y + 24, x + 23, y + 28],
-                    fill=owner_color,
-                    outline='black'
-                )
-
-    def update_player_buttons(self):
-        for widget in self.sidebar.winfo_children():
-            if isinstance(widget, tk.Button) and hasattr(widget, 'player_name'):
-                widget.destroy()
-
-        self.player_buttons = []
-        for player in self.app.players:
-            roll_info = self.app.player_rolls.get(player.name, ("", 0, 0))
-            remaining_tiles = roll_info[2]
-            
-            if self.app.roll_mode == 'external':
-                btn_text = f"{player.name}"
-            else:
-                btn_text = f"{player.name} ({remaining_tiles})"
-                
-            btn = tk.Button(
-                self.sidebar,
-                text=btn_text,
-                command=lambda p=player: self.select_player(p)
-            )
-            btn.player_name = player.name
-            btn.pack(fill=tk.X, padx=5, pady=2)
-            self.player_buttons.append(btn)
-            
-        self.highlight_selected_player_button()
-
-    def select_player(self, player):
-        """Handle player selection"""
-        # If selecting a player, disable resource paint mode
-        if self.resource_paint_mode is not None:
-            self.resource_paint_mode = None
-            self.highlight_resource_button()
-            
-        self.app.selected_player = player
-        self.highlight_selected_player_button()
-
-    def highlight_selected_player_button(self):
-        for btn in self.player_buttons:
-            if self.app.selected_player and btn.player_name == self.app.selected_player.name:
-                btn.config(relief=tk.SUNKEN)
-            else:
-                btn.config(relief=tk.RAISED)
-
-    def bind_events(self):
-        """Bind required events"""
-        self.canvas.bind("<Button-1>", self.on_canvas_click)
-        self.canvas.bind("<Button-3>", self.on_canvas_right_click)  # Right click
-
-    def on_h_scroll(self, value):
-        """Handle horizontal scroll events"""
-        if not self.app.map_image or not hasattr(self, 'map_item'):
-            return
-            
-        # Convert percentage to actual position
-        value = float(value) / 100
-        self.canvas.xview_moveto(value)
-
-    def on_v_scroll(self, value):
-        """Handle vertical scroll events"""
-        if not self.app.map_image or not hasattr(self, 'map_item'):
-            return
-            
-        # Convert percentage to actual position
-        value = float(value) / 100
-        self.canvas.yview_moveto(value)
-
-    def zoom_in(self):
-        """Handle zoom in button click"""
-        if not self.app.map_image:
-            return
-            
-        old_zoom = self.zoom_level
-        self.zoom_level = min(self.max_zoom, self.zoom_level * 1.2)
-        
-        if old_zoom != self.zoom_level:
-            # Update zoom label
-            zoom_percent = int(self.zoom_level * 100)
-            self.zoom_label.config(text=f"{zoom_percent}%")
-            
-            # Update display
-            self.display_map_image()
-
-    def zoom_out(self):
-        """Handle zoom out button click"""
-        if not self.app.map_image:
-            return
-            
-        old_zoom = self.zoom_level
-        self.zoom_level = max(self.min_zoom, self.zoom_level / 1.2)
-        
-        if old_zoom != self.zoom_level:
-            # Update zoom label
-            zoom_percent = int(self.zoom_level * 100)
-            self.zoom_label.config(text=f"{zoom_percent}%")
-            
-            # Update display
-            self.display_map_image()
-
-    def invalidate_display_cache(self):
-        """Force a redraw of the display"""
-        self.display_map_image()
+        return tile
 
     def on_canvas_click(self, event):
         if self.app.map_image is None:
@@ -928,7 +1357,7 @@ class GameScreen:
         # If we already have a selected unit, move it to the new position
         if self.selected_unit:
             # Check if the unit can be moved (not rooted)
-            from pyRisk.unit import UnitType
+            from pyRisk.unit import UnitType, DEFAULT_MAX_ARMY_SIZE
             
             # Check if this is a rooted Treant
             is_rooted = False
@@ -938,7 +1367,7 @@ class GameScreen:
                 is_rooted = True
             
             # Check if this is an army containing a rooted Treant
-            elif self.selected_unit.is_army:
+            elif hasattr(self.selected_unit, 'is_army') and self.selected_unit.is_army:
                 for sub_unit in self.selected_unit.sub_units:
                     if sub_unit.unit_type == UnitType.TREANT and "rooted" in sub_unit.special_properties:
                         is_rooted = True
@@ -953,7 +1382,24 @@ class GameScreen:
                 return
             
             print(f"Moving unit {self.selected_unit.unit_id} to position ({x}, {y})")
+            
+            # Store the max_army_size before moving (if it's an army)
+            max_size = DEFAULT_MAX_ARMY_SIZE
+            if hasattr(self.selected_unit, 'max_army_size'):
+                max_size = self.selected_unit.max_army_size
+                print(f"Preserving max_army_size: {max_size}")
+            elif hasattr(self.selected_unit, 'is_army') and self.selected_unit.is_army:
+                print(f"Army missing max_army_size attribute, setting default: {DEFAULT_MAX_ARMY_SIZE}")
+                self.selected_unit.max_army_size = DEFAULT_MAX_ARMY_SIZE
+                max_size = DEFAULT_MAX_ARMY_SIZE
+            
+            # Update position
             self.selected_unit.position = (x, y)
+            
+            # Ensure max_army_size is preserved
+            if hasattr(self.selected_unit, 'is_army') and self.selected_unit.is_army:
+                self.selected_unit.max_army_size = max_size
+                print(f"Confirmed max_army_size is set to {self.selected_unit.max_army_size}")
             
             # If this is an army, update positions of all sub-units
             if hasattr(self.selected_unit, 'sub_units') and self.selected_unit.sub_units:
@@ -970,6 +1416,8 @@ class GameScreen:
             return
             
         # If no unit is selected, try to select one at the clicked position
+        from pyRisk.unit import DEFAULT_MAX_ARMY_SIZE
+        
         clicked_unit = None
         for unit in self.app.units:
             if unit.position:
@@ -978,11 +1426,27 @@ class GameScreen:
                 if abs(unit_x - x) < 20 and abs(unit_y - y) < 20:
                     clicked_unit = unit
                     print(f"Found unit {unit.unit_id} at position ({unit_x}, {unit_y})")
+                    
+                    # Check if the unit has max_army_size properly set
+                    if hasattr(unit, 'is_army') and unit.is_army:
+                        if not hasattr(unit, 'max_army_size'):
+                            print(f"Army {unit.unit_id} missing max_army_size, adding default")
+                            unit.max_army_size = DEFAULT_MAX_ARMY_SIZE
+                        else:
+                            print(f"Army {unit.unit_id} has max_army_size: {unit.max_army_size}")
+                    
                     break
                     
         if clicked_unit:
             print(f"Selected unit {clicked_unit.unit_id}")
             self.selected_unit = clicked_unit
+            
+            # If it's an army, verify max_army_size is properly set
+            if hasattr(clicked_unit, 'is_army') and clicked_unit.is_army:
+                if not hasattr(clicked_unit, 'max_army_size'):
+                    clicked_unit.max_army_size = DEFAULT_MAX_ARMY_SIZE
+                    print(f"Added missing max_army_size: {DEFAULT_MAX_ARMY_SIZE}")
+            
             self.canvas.config(cursor="fleur")  # Change cursor to indicate movement
         else:
             print("No unit found at clicked position")
@@ -990,9 +1454,10 @@ class GameScreen:
             print("All units:")
             for unit in self.app.units:
                 print(f"  Unit {unit.unit_id}: position={unit.position}, owner={unit.owner}, type={unit.unit_type}")
+                if hasattr(unit, 'is_army') and unit.is_army:
+                    print(f"    Army with {len(unit.sub_units)} units, max_size: {getattr(unit, 'max_army_size', 'MISSING')}")
             
             # Do NOT create a new army here - just inform the user that no unit was found
-            # This is the fix for the issue where a new army is created when clicking in an empty area
             messagebox.showinfo("No Unit Found", "No unit found at this position. Please click on an existing unit to move it.")
 
     def handle_map_coloring(self, x, y):
@@ -1158,13 +1623,22 @@ class GameScreen:
     def on_canvas_configure(self, event):
         self.canvas.configure(scrollregion=self.canvas.bbox('all'))
 
+    def invalidate_display_cache(self):
+        """Clear the display cache to force a complete redraw on next display_map_image call"""
+        if hasattr(self, '_cached_base_image'):
+            self._cached_base_image = None
+        if hasattr(self, '_tile_cache'):
+            self._tile_cache = {}
+        if hasattr(self, 'tile_cache'):
+            self.tile_cache = {}
+
     def toggle_mode(self):
         if self.app.mode == 'color':
             self.app.mode = 'erase'
-            self.mode_button.config(text="Switch to Color Mode")
+            self.mode_toggle_btn.config(text="Switch to Erase Mode")
         else:
             self.app.mode = 'color'
-            self.mode_button.config(text="Switch to Erase Mode")
+            self.mode_toggle_btn.config(text="Switch to Color Mode")
 
     def undo(self):
         """Undo the last map change"""
@@ -1233,12 +1707,22 @@ class GameScreen:
                 self.unit_mode_button.config(state=tk.NORMAL)
 
     def destroy(self):
-        self.canvas.unbind("<Button-1>")
-        self.canvas.unbind("<Button-3>")  # Unbind right click
-        self.canvas.unbind("<MouseWheel>")
-        self.canvas.unbind("<Button-4>")
-        self.canvas.unbind("<Button-5>")
-        self.frame.destroy()
+        """Clean up resources before destruction"""
+        # Clear all canvas items to prevent memory leaks
+        if hasattr(self, 'canvas'):
+            self.canvas.delete("all")
+            
+        # Clear unit canvas items list
+        if hasattr(self, '_unit_canvas_items'):
+            self._unit_canvas_items.clear()
+            
+        # Destroy the frame and all its children
+        if hasattr(self, 'frame'):
+            self.frame.destroy()
+            
+        # Clear image references to help with garbage collection
+        self.map_photo = None
+        self.map_item = None
 
     def place_army_at_position(self, player, position):
         """Place an existing army or create a new one for the specified player at the given position.
@@ -1247,7 +1731,14 @@ class GameScreen:
             player: The Player object who will own the army
             position: A tuple (x, y) where the army should be placed
         """
-        from pyRisk.unit import Unit, UnitType
+        # Import needed components
+        from pyRisk.unit import Unit, UnitType, DEFAULT_MAX_ARMY_SIZE
+        
+        # Debug info
+        print(f"\n=== Placing Army ===")
+        print(f"Player: {player.name}")
+        print(f"Position: {position}")
+        print(f"DEFAULT_MAX_ARMY_SIZE: {DEFAULT_MAX_ARMY_SIZE}")
         
         # Check if there's already an army at this position
         x, y = position
@@ -1357,12 +1848,27 @@ class GameScreen:
         if selected_army is None:
             print(f"Creating new army for {player.name} at position {position}")
             
+            # Ask for max army size
+            from tkinter import simpledialog
+            max_size = simpledialog.askinteger(
+                "Army Size Limit", 
+                f"Enter the maximum size for this army (default is {DEFAULT_MAX_ARMY_SIZE}):",
+                initialvalue=DEFAULT_MAX_ARMY_SIZE,
+                minvalue=1,
+                maxvalue=100
+            )
+            
+            # If user cancels, use the default
+            if max_size is None:
+                max_size = DEFAULT_MAX_ARMY_SIZE
+            
             # Create army as a special unit that will contain sub-units
             selected_army = Unit(
                 owner=player.name,
                 unit_type=UnitType.INFANTRY,  # Default type, doesn't matter for armies
                 unit_id=self.app.next_unit_id,
-                position=None  # Will set position below
+                position=None,  # Will set position below
+                max_army_size=max_size  # Set the max size
             )
             
             # Add to app's units list
@@ -1482,14 +1988,104 @@ class GameScreen:
         Args:
             unit: The Unit object to move
         """
+        from pyRisk.unit import DEFAULT_MAX_ARMY_SIZE
+        
         self.unit_mode = True
         self.selected_unit = unit
+        
+        # Check if this is an army and if max_army_size is properly set
+        if hasattr(unit, 'is_army') and unit.is_army:
+            if not hasattr(unit, 'max_army_size'):
+                print(f"Army {unit.unit_id} missing max_army_size in start_unit_movement, adding default")
+                unit.max_army_size = DEFAULT_MAX_ARMY_SIZE
+            else:
+                print(f"Army {unit.unit_id} has max_army_size: {unit.max_army_size}")
+        
         self.canvas.config(cursor="fleur")  # Change cursor to indicate movement
         
         # Update UI to reflect unit movement mode
         if hasattr(self, 'unit_mode_button'):
             self.unit_mode_button.config(text="Exit Unit Move Mode")
-            self.mode_button.config(state=tk.DISABLED)
+            self.mode_toggle_btn.config(state=tk.DISABLED)
+
+    def show_context_menu(self, event, x, y):
+        """Redirects to _show_context_menu
+        
+        Args:
+            event: The event that triggered this method
+            x: X-coordinate in image space
+            y: Y-coordinate in image space
+        """
+        self._show_context_menu(event, x, y)
+        
+    def place_sprite(self, sprite_type, x, y):
+        """Place a sprite on the map at the specified coordinates.
+        
+        Args:
+            sprite_type: Type of sprite to place (e.g., 'henge', 'farm')
+            x: X-coordinate in image space
+            y: Y-coordinate in image space
+        """
+        # Check if player is selected
+        if not self.app.selected_player:
+            messagebox.showwarning("No Player Selected", "Please select a player first.")
+            return
+            
+        # Check if sprite type is available
+        if sprite_type not in self.sprite_manager.sprites:
+            messagebox.showwarning("Sprite Not Found", f"Sprite type '{sprite_type}' not found.")
+            return
+        
+        try:
+            # Add the sprite directly to the app's placed_sprites dictionary
+            position = (x, y)
+            self.app.placed_sprites[position] = SpriteInfo(
+                sprite_type=sprite_type,
+                position=position,
+                owner=self.app.selected_player.name
+            )
+            
+            # Update the display
+            self.display_map_image()
+            
+            # Show confirmation
+            messagebox.showinfo("Success", f"{sprite_type.title()} placed successfully.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to place sprite: {str(e)}")
+        
+    def place_city(self, x, y):
+        """Place a city on the map for the selected player.
+        
+        Args:
+            x: X-coordinate in image space
+            y: Y-coordinate in image space
+        """
+        if not self.app.selected_player:
+            messagebox.showwarning("No Player Selected", "Please select a player first.")
+            return
+            
+        try:
+            # Check if 'city' sprite is available
+            if 'city' not in self.sprite_manager.sprites:
+                messagebox.showwarning("Sprite Not Found", "City sprite not found.")
+                return
+                
+            # Add city sprite directly to the app's placed_sprites dictionary
+            position = (x, y)
+            self.app.placed_sprites[position] = SpriteInfo(
+                sprite_type='city',
+                position=position,
+                owner=self.app.selected_player.name,
+                name=f"{self.app.selected_player.name}'s City"
+            )
+            
+            # Update display
+            self.display_map_image()
+            
+            # Show confirmation
+            messagebox.showinfo("Success", "City placed successfully.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to place city: {str(e)}")
 
     def show_unit_details(self, unit):
         """Show detailed information about a unit.
@@ -1497,13 +2093,17 @@ class GameScreen:
         Args:
             unit: The Unit object to show details for
         """
-        from pyRisk.unit import UnitType
+        from pyRisk.unit import UnitType, UnitClass
         
         # Build the details message
         details = f"Unit #{unit.unit_id}\n"
         details += f"Owner: {unit.owner}\n"
         details += f"Type: {unit.unit_type.value}\n"
         details += f"Position: {unit.position}\n\n"
+        
+        # Show unit class if available
+        if hasattr(unit.unit_type, 'unit_class'):
+            details += f"Class: {unit.unit_type.unit_class.value}\n\n"
         
         # Check if unit is rooted
         is_rooted = False
@@ -1533,6 +2133,10 @@ class GameScreen:
         details += f"Wall: {unit.wall_dice}\n"
         details += f"Wall Bonus: +{unit.wall_bonus}" if unit.wall_bonus > 0 else f"Wall Bonus: {unit.wall_bonus}"
         
+        # Show naval unit properties if applicable
+        if hasattr(unit.unit_type, 'unit_class') and unit.unit_type.unit_class == UnitClass.NAVAL:
+            details += f"\nCarrying Capacity: {unit.unit_type.carrying_capacity}"
+            
         # Show the details in a message box
         messagebox.showinfo(f"Unit #{unit.unit_id} Details", details)
         
@@ -1571,7 +2175,7 @@ class GameScreen:
                 if self.unit_mode:
                     self.unit_mode = False
                     self.unit_mode_button.config(text="Enter Unit Move Mode")
-                    self.mode_button.config(state=tk.NORMAL)
+                    self.mode_toggle_btn.config(state=tk.NORMAL)
                     self.canvas.config(cursor="")
                     self.selected_unit = None
 
@@ -1600,3 +2204,35 @@ class GameScreen:
         
         # Update the display
         self.display_map_image()
+
+    def add_new_player(self):
+        """Method to add a new player from the player buttons"""
+        name = simpledialog.askstring("Player Name", "Enter player name:")
+        if name:
+            color_tuple = colorchooser.askcolor(title="Choose player color")
+            if color_tuple[0]:  # color_tuple is ((r,g,b), '#rrggbb')
+                color = color_tuple[0]  # Get the RGB tuple
+                try:
+                    # Validate the player data
+                    validated_name, validated_color, _ = self.app.validate_player_data(name, color, None)
+                    player = Player(validated_name, validated_color)
+                    self.app.players.append(player)
+                    self.update_player_buttons()
+                except ValueError as e:
+                    messagebox.showerror("Invalid Player Data", str(e))
+
+    def toggle_unit_mode(self):
+        """Toggle between unit movement mode and regular map editing mode"""
+        self.unit_mode = not self.unit_mode if hasattr(self, 'unit_mode') else True
+        print(f"\n=== Unit Mode Toggled ===")
+        print(f"Unit mode is now: {'ON' if self.unit_mode else 'OFF'}")
+        
+        if self.unit_mode:
+            self.unit_mode_button.config(text="Exit Unit Move Mode")
+            self.mode_toggle_btn.config(state=tk.DISABLED)
+            self.canvas.config(cursor="crosshair")
+        else:
+            self.unit_mode_button.config(text="Enter Unit Move Mode")
+            self.mode_toggle_btn.config(state=tk.NORMAL)
+            self.canvas.config(cursor="")
+            self.selected_unit = None

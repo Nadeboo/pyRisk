@@ -1,7 +1,8 @@
 import tkinter as tk
-from tkinter import simpledialog, colorchooser, messagebox, filedialog
+from tkinter import simpledialog, colorchooser, messagebox, filedialog, ttk
 from PIL import Image, ImageGrab
 from pyRisk.player import Player
+from pyRisk.custom_scrollbar import CustomScrollbar
 
 class ResourceTooltip:
     """Tooltip widget that shows resource source breakdown"""
@@ -213,369 +214,540 @@ class PlayersScreen:
     def __init__(self, parent, app):
         self.parent = parent
         self.app = app
-        self.frame = tk.Frame(parent)
-        self.frame.pack(fill=tk.BOTH, expand=True)
-        self.selected_player = None
+        self.current_theme = app.current_theme
         
-        # Available races
-        self.races = ["HUMAN", "FAE", "WIZARD", "MERFOLK", "DWARF", "GIANT", "ORC"]
+        self.frame = tk.Frame(parent, bg=self.current_theme['bg'])
+        self.frame.pack(fill=tk.BOTH, expand=True)
         
         self.setup_widgets()
-
-    def update_player_boxes(self):
-        """Update all player boxes to reflect current values"""
-        # Find all ResourceCounter widgets and update them
-        def update_counters(widget):
-            if isinstance(widget, ResourceCounter):
-                widget.update_display()
-            for child in widget.winfo_children():
-                update_counters(child)
         
-        update_counters(self.grid_frame)
-
     def setup_widgets(self):
-            # Button frame at the bottom
-            btn_frame = tk.Frame(self.frame)
-            btn_frame.pack(side=tk.BOTTOM, pady=20)
-            
-            # Add/Remove and Export buttons
-            for text, cmd in [("Add Player", self.add_player), 
-                            ("Remove Player", self.remove_player),
-                            ("Export View", self.export_view)]:
-                tk.Button(btn_frame, text=text, command=cmd).pack(side=tk.LEFT, padx=5)
-
-            # Create a canvas and scrollbar for scrolling
-            self.canvas = tk.Canvas(self.frame)
-            scrollbar = tk.Scrollbar(self.frame, orient="vertical", command=self.canvas.yview)
-            self.scrollable_frame = tk.Frame(self.canvas)
-
-            # Configure the canvas
-            self.scrollable_frame.bind(
-                "<Configure>",
-                lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-            )
-            
-            # Add mousewheel scrolling
-            self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-
-            # Create window in canvas
-            self.canvas_frame = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-
-            # Configure canvas to expand with window
-            self.canvas.pack(side="left", fill="both", expand=True)
-            scrollbar.pack(side="right", fill="y")
-
-            self.canvas.configure(yscrollcommand=scrollbar.set)
-            
-            # Create grid frame for 3-column layout and ensure it doesn't expand
-            self.grid_frame = tk.Frame(self.scrollable_frame)
-            self.grid_frame.pack(side="left", anchor="nw")
-            
-            # Bind canvas resizing
-            self.canvas.bind('<Configure>', self._on_canvas_configure)
-
-            self.update_player_list()
-
-    def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-
-    def _on_canvas_configure(self, event):
-        # Update the width of the frame to match the canvas
-        self.canvas.itemconfig(self.canvas_frame, width=event.width)
-
-    def create_player_box(self, player, parent):
-        """Create a retro-styled box for a single player"""
-        # Main outer frame for this player
-        outer_frame = tk.Frame(parent)
-        
-        # Resource counters frame (left side)
-        resources_frame = tk.Frame(outer_frame, relief=tk.SOLID, bd=2, bg='white')
-        resources_frame.pack(side=tk.LEFT, fill=tk.Y)
-        
-        # Create resource counters
-        resources = [
-            ("GOLD", 
-             lambda: player.gold, 
-             lambda x: setattr(player, 'gold', x),
-             lambda: player.gold_per_turn,
-             lambda x: setattr(player, 'gold_per_turn', x)),
-            ("RESEARCH", 
-             lambda: player.research, 
-             lambda x: setattr(player, 'research', x),
-             lambda: player.research_per_turn,
-             lambda x: setattr(player, 'research_per_turn', x)),
-            ("MANA", 
-             lambda: player.mana, 
-             lambda x: setattr(player, 'mana', x),
-             lambda: player.mana_per_turn,
-             lambda x: setattr(player, 'mana_per_turn', x)),
-            ("INFLUENCE", 
-             lambda: player.influence, 
-             lambda x: setattr(player, 'influence', x),
-             lambda: player.influence_per_turn,
-             lambda x: setattr(player, 'influence_per_turn', x))
-        ]
-        
-        for name, get_val, set_val, get_per_turn, set_per_turn in resources:
-            counter = ResourceCounter(resources_frame, name, get_val, set_val, get_per_turn, set_per_turn, player)
-            counter.pack(padx=5, pady=2)
-            counter.bind('<Button-1>', lambda e, p=player: self.on_player_select(p))
-        
-        # Middle content frame
-        player_frame = tk.Frame(outer_frame, relief=tk.SOLID, bd=2, bg='white')
-        player_frame.pack(side=tk.LEFT, fill=tk.Y)
-        
-        # Player name header
-        name_frame = tk.Frame(player_frame, relief=tk.SOLID, bd=1, bg='white')
-        name_frame.pack(fill=tk.X)
-        name_label = tk.Label(name_frame, text=player.name, font=("Courier", 14, "bold"), bg='white')
-        name_label.pack(pady=5)
-        
-        # Race selection frame
-        race_frame = tk.Frame(player_frame, bg='white')
-        race_frame.pack(padx=10, pady=5)
-        
-        # Create variables for checkboxes
-        self.race_vars = {race: tk.BooleanVar(value=player.faction == race) 
-                         for race in self.races}
-        
-        # Create checkboxes for each race
-        for race in self.races:
-            race_row = tk.Frame(race_frame, bg='white')
-            race_row.pack()
-            
-            # Add race name and checkbox
-            cb = tk.Checkbutton(race_row, text=race, font=("Courier", 12),
-                              variable=self.race_vars[race],
-                              command=lambda p=player, r=race: self.on_race_select(p, r),
-                              bg='white')
-            cb.pack(side=tk.RIGHT)
-            
-        # Add region bonus counter at the bottom of the race frame
-        region_bonus_frame = tk.Frame(race_frame, bg='white', pady=10)
-        region_bonus_frame.pack(fill=tk.X)
-        
-        # Region bonus label
-        tk.Label(region_bonus_frame, text="REGION BONUS:", font=("Courier", 10, "bold"), bg='white').pack(anchor="w")
-        
-        # Region bonus counter controls
-        region_counter_frame = tk.Frame(region_bonus_frame, bg='white')
-        region_counter_frame.pack(fill=tk.X, pady=5)
-        
-        # Decrement button
-        tk.Button(
-            region_counter_frame, 
-            text="-", 
-            command=lambda p=player: self.adjust_region_bonus(p, -1)
-        ).pack(side=tk.LEFT)
-        
-        # Value display - store in player's attributes
-        region_bonus_label = tk.Label(
-            region_counter_frame, 
-            text=str(player.region_bonus), 
-            width=5, 
-            font=("Courier", 12), 
-            bg='white'
+        # Title
+        title_frame = tk.Frame(self.frame, bg=self.current_theme['bg'])
+        title_frame.pack(pady=20)
+        title_label = tk.Label(
+            title_frame, 
+            text="Player Management", 
+            font=("Arial", 24), 
+            bg=self.current_theme['bg'],
+            fg=self.current_theme['fg']
         )
-        region_bonus_label.pack(side=tk.LEFT)
+        title_label.pack()
         
-        # Store the label reference in the player's attributes dictionary
-        if not hasattr(player, 'ui_elements'):
-            player.ui_elements = {}
-        player.ui_elements['region_bonus_label'] = region_bonus_label
+        # Players container with scrollbar
+        self.container_frame = tk.Frame(self.frame, bg=self.current_theme['bg'])
+        self.container_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         
-        # Increment button
-        tk.Button(
-            region_counter_frame, 
-            text="+", 
-            command=lambda p=player: self.adjust_region_bonus(p, 1)
-        ).pack(side=tk.LEFT)
+        # Create canvas for scrolling
+        self.canvas = tk.Canvas(
+            self.container_frame, 
+            bg=self.current_theme['bg'],
+            highlightthickness=0,
+            bd=0
+        )
         
-        # Influence per turn indicator
-        influence_frame = tk.Frame(region_bonus_frame, bg='white')
-        influence_frame.pack(fill=tk.X, pady=2)
-        tk.Label(influence_frame, text="(+1 influence per point)", font=("Courier", 8), fg="blue", bg='white').pack(anchor="w")
-
-        # Right side color box
-        color_box = tk.Frame(outer_frame, relief=tk.SOLID, bd=2, width=60, height=150)
-        color_box.pack(side=tk.LEFT, padx=10)
-        color_box.pack_propagate(False)
+        # Add custom scrollbar
+        self.scrollbar = CustomScrollbar(
+            self.container_frame,
+            orientation="vertical",
+            command=self.canvas.yview,
+            bg=self.current_theme.get('scrollbar_bg', self.current_theme['bg']),
+            fg=self.current_theme.get('scrollbar_fg', self.current_theme['button_bg']),
+            width=12
+        )
         
-        # Color display inside the box
-        color_display = tk.Frame(color_box, bg='#{:02x}{:02x}{:02x}'.format(*player.color))
-        color_display.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Make everything clickable for selection
-        for widget in [outer_frame, player_frame, name_frame, name_label, race_frame, 
-                      color_box, color_display]:
-            widget.bind('<Button-1>', lambda e, p=player: self.on_player_select(p))
+        # Frame inside canvas for players
+        self.players_frame = tk.Frame(self.canvas, bg=self.current_theme['bg'])
+        self.canvas_frame = self.canvas.create_window(
+            (0, 0), 
+            window=self.players_frame, 
+            anchor=tk.NW
+        )
+        
+        # Add player button
+        self.add_btn = tk.Button(
+            self.frame, 
+            text="Add Player", 
+            command=self.add_player,
+            bg=self.current_theme['button_bg'],
+            fg=self.current_theme['button_fg'],
+            activebackground=self.current_theme['highlight_bg'],
+            activeforeground=self.current_theme['highlight_fg']
+        )
+        self.add_btn.pack(pady=20)
+        
+        # Configure canvas scrolling
+        self.players_frame.bind("<Configure>", self.on_frame_configure)
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
+        self.canvas.bind_all("<MouseWheel>", self.on_mousewheel)
+        
+        # Display existing players
+        self.display_players()
+    
+    def on_canvas_configure(self, event):
+        self.canvas.itemconfig(self.canvas_frame, width=event.width)
+    
+    def on_frame_configure(self, event):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        
+    def on_mousewheel(self, event):
+        # Respond to mouse wheel in canvas only if the mouse is over the canvas
+        if event.widget == self.canvas:
+            self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+    
+    def add_player(self):
+        """Add a new player to the game"""
+        player_num = len(self.app.players) + 1
+        default_name = f"Player {player_num}"
+        
+        # Get player name
+        name = simpledialog.askstring("Player Name", "Enter player name:", initialvalue=default_name)
+        if not name:
+            return
             
-        # If this is the selected player, highlight it
-        if self.selected_player == player:
-            for frame in [player_frame, name_frame, race_frame]:
-                frame.configure(bg='lightblue')
-            name_label.configure(bg='lightblue')
-            for child in race_frame.winfo_children():
-                child.configure(bg='lightblue')
-                for subchild in child.winfo_children():
-                    subchild.configure(bg='lightblue')
-                    
-        return outer_frame
-
-    def update_player_list(self):
-        # Clear existing player boxes
-        for widget in self.grid_frame.winfo_children():
+        # Choose player color
+        color_rgb, color_hex = colorchooser.askcolor(title="Choose Player Color")
+        if not color_rgb:
+            return
+        
+        # Choose faction
+        factions = ["HUMAN", "WIZARD", "UNDEAD", "NONE"]
+        faction_dialog = tk.Toplevel(self.frame)
+        faction_dialog.title("Choose Faction")
+        faction_dialog.transient(self.frame)
+        faction_dialog.grab_set()
+        
+        # Apply theme
+        faction_dialog.configure(bg=self.current_theme['bg'])
+        
+        faction_var = tk.StringVar()
+        faction_var.set(factions[0])  # Default to first faction
+        
+        faction_label = tk.Label(
+            faction_dialog, 
+            text="Select faction:", 
+            bg=self.current_theme['bg'],
+            fg=self.current_theme['fg']
+        )
+        faction_label.pack(pady=10)
+        
+        # Create styled radio buttons
+        for faction in factions:
+            radio = tk.Radiobutton(
+                faction_dialog, 
+                text=faction, 
+                variable=faction_var, 
+                value=faction,
+                bg=self.current_theme['bg'],
+                fg=self.current_theme['fg'],
+                activebackground=self.current_theme['highlight_bg'],
+                activeforeground=self.current_theme['highlight_fg'],
+                selectcolor=self.current_theme['bg']  # Background of the radio button when selected
+            )
+            radio.pack(anchor=tk.W, padx=20, pady=5)
+        
+        # Buttons frame
+        buttons_frame = tk.Frame(faction_dialog, bg=self.current_theme['bg'])
+        buttons_frame.pack(pady=15)
+        
+        def on_ok():
+            faction_dialog.selected_faction = faction_var.get()
+            faction_dialog.destroy()
+            
+        def on_cancel():
+            faction_dialog.selected_faction = None
+            faction_dialog.destroy()
+        
+        # OK and Cancel buttons
+        ok_button = tk.Button(
+            buttons_frame, 
+            text="OK", 
+            command=on_ok,
+            bg=self.current_theme['button_bg'],
+            fg=self.current_theme['button_fg'],
+            activebackground=self.current_theme['highlight_bg'],
+            activeforeground=self.current_theme['highlight_fg']
+        )
+        ok_button.pack(side=tk.LEFT, padx=10)
+        
+        cancel_button = tk.Button(
+            buttons_frame, 
+            text="Cancel", 
+            command=on_cancel,
+            bg=self.current_theme['button_bg'],
+            fg=self.current_theme['button_fg'],
+            activebackground=self.current_theme['highlight_bg'],
+            activeforeground=self.current_theme['highlight_fg']
+        )
+        cancel_button.pack(side=tk.LEFT, padx=10)
+        
+        # Center the dialog
+        self.frame.update_idletasks()
+        width = faction_dialog.winfo_width()
+        height = faction_dialog.winfo_height()
+        x = (faction_dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (faction_dialog.winfo_screenheight() // 2) - (height // 2)
+        faction_dialog.geometry('{}x{}+{}+{}'.format(width, height, x, y))
+        
+        # Wait for dialog to close
+        faction_dialog.wait_window()
+        
+        # If dialog was cancelled
+        if not hasattr(faction_dialog, 'selected_faction') or faction_dialog.selected_faction is None:
+            return
+            
+        faction = faction_dialog.selected_faction
+        
+        try:
+            # Validate player data
+            name, color_rgb, faction = self.app.validate_player_data(name, color_rgb, faction)
+            
+            # Add player
+            self.app.players.append(Player(name, color_rgb, faction))
+            self.display_players()
+        except ValueError as e:
+            tk.messagebox.showerror("Invalid Data", str(e))
+    
+    def display_players(self):
+        """Display all players"""
+        # Clear existing player frames
+        for widget in self.players_frame.winfo_children():
             widget.destroy()
             
-        # Calculate grid layout
-        num_players = len(self.app.players)
-        current_row = 0
-        current_col = 0
-        
-        # Create new player boxes in a grid
-        for player in self.app.players:
-            player_frame = self.create_player_box(player, self.grid_frame)
-            player_frame.grid(row=current_row, column=current_col, padx=5, pady=5)
-            
-            # Move to next column or row
-            current_col += 1
-            if current_col >= 3:  # 3 columns
-                current_col = 0
-                current_row += 1
-
-    def add_player(self):
-        name = simpledialog.askstring("Player Name", "Enter player name:")
-        if name:
-            color = colorchooser.askcolor(title="Choose player color")
-            if color[0]:
-                try:
-                    name, color, _ = self.app.validate_player_data(name, color[0], None)
-                    player = Player(name, color)
-                    self.app.players.append(player)
-                    self.update_player_list()
-                    if hasattr(self.app.current_screen, 'update_player_buttons'):
-                        self.app.current_screen.update_player_buttons()
-                except ValueError as e:
-                    messagebox.showerror("Invalid Input", str(e))
-
-    def on_player_select(self, player):
-        """Handle player selection"""
-        self.selected_player = player
-        self.update_player_list()
-
-    def on_race_select(self, player, selected_race):
-        """Handle race selection for a player"""
-        # Uncheck other races
-        for race, var in self.race_vars.items():
-            if race != selected_race and var.get():
-                var.set(False)
-        
-        # Update player faction
-        old_faction = player.faction
-        if self.race_vars[selected_race].get():
-            player.faction = selected_race
-        else:
-            player.faction = None
-            
-        # If faction changed, update resource calculations
-        if old_faction != player.faction:
-            # Recalculate resource gains
-            self.app.update_player_resources()
-            
-            # Completely rebuild the player list to ensure tooltips are updated
-            self.update_player_list()
-
-    def remove_player(self):
-        """Remove the selected player"""
-        if self.selected_player:
-            self.app.players.remove(self.selected_player)
-            self.selected_player = None
-            self.update_player_list()
-            if hasattr(self.app.current_screen, 'update_player_buttons'):
-                self.app.current_screen.update_player_buttons()
-        else:
-            messagebox.showwarning("No Selection", "Please select a player to remove.")
-
-    def export_view(self):
-        """Export the entire players view as an image"""
-        try:
-            # Get file save location
-            file_path = filedialog.asksaveasfilename(
-                defaultextension=".png",
-                filetypes=[("PNG files", "*.png")]
+        # Create frame for each player
+        for i, player in enumerate(self.app.players):
+            # Create player frame
+            player_frame = tk.Frame(
+                self.players_frame,
+                borderwidth=2,
+                relief="raised",
+                bg=self.current_theme['bg'],  # <-- ONLY change: use theme bg color instead of white
+                padx=10,
+                pady=10
             )
+            player_frame.pack(fill=tk.X, padx=20, pady=10)
             
-            if not file_path:
-                return
-
-            # Get the total height of all content
-            bbox = self.canvas.bbox("all")
-            if not bbox:
-                messagebox.showwarning("Export Error", "No content to export.")
-                return
-
-            # Get the total height of all content
-            total_width = self.canvas.winfo_width()
-            total_height = bbox[3] - bbox[1]
+            # Left side
+            left_frame = tk.Frame(player_frame, bg=self.current_theme['bg'])  # <-- ONLY change: use theme bg
+            left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             
-            # Create new image with white background
-            image = Image.new('RGB', (total_width, total_height), 'white')
+            # Player name label
+            name_label = tk.Label(
+                left_frame, 
+                text=player.name, 
+                font=("Arial", 16, "bold"),
+                bg=self.current_theme['bg'],  # <-- ONLY change: use theme bg
+                fg=self.current_theme['fg']   # <-- ONLY change: use theme fg
+            )
+            name_label.pack(anchor=tk.W)
             
-            # Store current scroll position
-            original_scroll = self.canvas.yview()
+            # Player faction
+            faction_label = tk.Label(
+                left_frame, 
+                text=f"Faction: {player.faction}" if player.faction else "Faction: None",
+                bg=self.current_theme['bg'],  # <-- ONLY change: use theme bg
+                fg=self.current_theme['fg']   # <-- ONLY change: use theme fg
+            )
+            faction_label.pack(anchor=tk.W)
             
-            try:
-                # Temporarily configure canvas
-                self.canvas.configure(scrollregion=(0, 0, total_width, total_height))
+            # Player resources (if in Tregonia mode)
+            if self.app.roll_mode == 'tregonia':
+                resources_frame = tk.Frame(left_frame, bg=self.current_theme['bg'])  # <-- ONLY change: use theme bg
+                resources_frame.pack(anchor=tk.W, pady=(10, 0))
                 
-                # Screenshot each part and combine
-                pieces = []
-                for y in range(0, total_height, 1000):  # Process in chunks
-                    # Move scroll to position
-                    self.canvas.yview_moveto(y / total_height)
-                    self.canvas.update_idletasks()  # Wait for scroll
+                resources = [
+                    ("Gold", player.gold_per_turn),
+                    ("Research", player.research_per_turn),
+                    ("Mana", player.mana_per_turn),
+                    ("Influence", player.influence_per_turn)
+                ]
+                
+                for resource, value in resources:
+                    resource_frame = tk.Frame(resources_frame, bg=self.current_theme['bg'])  # <-- ONLY change: use theme bg
+                    resource_frame.pack(side=tk.LEFT, padx=(0, 15))
                     
-                    # Capture portion
-                    x = self.canvas.winfo_rootx()
-                    y_offset = self.canvas.winfo_rooty()
-                    piece = ImageGrab.grab(bbox=(
-                        x,
-                        y_offset,
-                        x + total_width,
-                        min(y_offset + 1000, y_offset + (total_height - y))
-                    ))
-                    pieces.append((0, y, piece))
+                    resource_name = tk.Label(
+                        resource_frame, 
+                        text=resource, 
+                        font=("Arial", 10),
+                        bg=self.current_theme['bg'],  # <-- ONLY change: use theme bg
+                        fg=self.current_theme['fg']   # <-- ONLY change: use theme fg
+                    )
+                    resource_name.pack(anchor=tk.W)
+                    
+                    resource_value = tk.Label(
+                        resource_frame, 
+                        text=f"+{value}/turn",
+                        font=("Arial", 12, "bold"),
+                        bg=self.current_theme['bg'],  # <-- ONLY change: use theme bg
+                        fg=self.current_theme['fg']   # <-- ONLY change: use theme fg
+                    )
+                    resource_value.pack(anchor=tk.W)
+            
+            # Right side
+            right_frame = tk.Frame(player_frame, bg=self.current_theme['bg'])  # <-- ONLY change: use theme bg
+            right_frame.pack(side=tk.RIGHT, padx=(10, 0))
+            
+            # Color display
+            color_frame = tk.Frame(
+                right_frame, 
+                width=50, 
+                height=50, 
+                bg='#%02x%02x%02x' % tuple(int(c) for c in player.color)
+            )
+            color_frame.pack(side=tk.TOP, pady=(0, 5))
+            
+            # Edit/Delete buttons
+            buttons_frame = tk.Frame(right_frame, bg=self.current_theme['bg'])  # <-- ONLY change: use theme bg
+            buttons_frame.pack(side=tk.BOTTOM)
+            
+            edit_btn = tk.Button(
+                buttons_frame, 
+                text="Edit",
+                command=lambda p=player: self.edit_player(p),
+                bg=self.current_theme['button_bg'],
+                fg=self.current_theme['button_fg'],
+                activebackground=self.current_theme['highlight_bg'],
+                activeforeground=self.current_theme['highlight_fg'],
+                padx=5
+            )
+            edit_btn.pack(side=tk.LEFT, padx=2)
+            
+            delete_btn = tk.Button(
+                buttons_frame, 
+                text="Delete",
+                command=lambda p=player: self.delete_player(p),
+                bg=self.current_theme['button_bg'],
+                fg=self.current_theme['button_fg'],
+                activebackground=self.current_theme['highlight_bg'],
+                activeforeground=self.current_theme['highlight_fg'],
+                padx=5
+            )
+            delete_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Update canvas scroll region
+        self.canvas.update_idletasks()
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+    
+    def get_contrasting_text_color(self, bg_color):
+        """Return a contrasting text color (black/white) based on background color"""
+        # For a theme background, just use the theme's foreground color
+        return self.current_theme['fg']
+    
+    def edit_player(self, player):
+        """Edit an existing player"""
+        # Get player name
+        name = simpledialog.askstring("Player Name", "Enter player name:", initialvalue=player.name)
+        if not name:
+            return
+            
+        # Choose player color
+        initial_color = '#%02x%02x%02x' % tuple(int(c) for c in player.color)
+        color_rgb, color_hex = colorchooser.askcolor(title="Choose Player Color", initialcolor=initial_color)
+        if not color_rgb:
+            return
+        
+        # Choose faction
+        factions = ["HUMAN", "WIZARD", "UNDEAD", "NONE"]
+        faction_dialog = tk.Toplevel(self.frame)
+        faction_dialog.title("Choose Faction")
+        faction_dialog.transient(self.frame)
+        faction_dialog.grab_set()
+        
+        # Apply theme
+        faction_dialog.configure(bg=self.current_theme['bg'])
+        
+        faction_var = tk.StringVar()
+        faction_var.set(player.faction if player.faction else "NONE")  # Default to player's current faction
+        
+        faction_label = tk.Label(
+            faction_dialog, 
+            text="Select faction:", 
+            bg=self.current_theme['bg'],
+            fg=self.current_theme['fg']
+        )
+        faction_label.pack(pady=10)
+        
+        # Create styled radio buttons
+        for faction in factions:
+            radio = tk.Radiobutton(
+                faction_dialog, 
+                text=faction, 
+                variable=faction_var, 
+                value=faction,
+                bg=self.current_theme['bg'],
+                fg=self.current_theme['fg'],
+                activebackground=self.current_theme['highlight_bg'],
+                activeforeground=self.current_theme['highlight_fg'],
+                selectcolor=self.current_theme['bg']  # Background of the radio button when selected
+            )
+            radio.pack(anchor=tk.W, padx=20, pady=5)
+        
+        # Buttons frame
+        buttons_frame = tk.Frame(faction_dialog, bg=self.current_theme['bg'])
+        buttons_frame.pack(pady=15)
+        
+        def on_ok():
+            faction_dialog.selected_faction = faction_var.get()
+            faction_dialog.destroy()
+            
+        def on_cancel():
+            faction_dialog.selected_faction = None
+            faction_dialog.destroy()
+        
+        # OK and Cancel buttons
+        ok_button = tk.Button(
+            buttons_frame, 
+            text="OK", 
+            command=on_ok,
+            bg=self.current_theme['button_bg'],
+            fg=self.current_theme['button_fg'],
+            activebackground=self.current_theme['highlight_bg'],
+            activeforeground=self.current_theme['highlight_fg']
+        )
+        ok_button.pack(side=tk.LEFT, padx=10)
+        
+        cancel_button = tk.Button(
+            buttons_frame, 
+            text="Cancel", 
+            command=on_cancel,
+            bg=self.current_theme['button_bg'],
+            fg=self.current_theme['button_fg'],
+            activebackground=self.current_theme['highlight_bg'],
+            activeforeground=self.current_theme['highlight_fg']
+        )
+        cancel_button.pack(side=tk.LEFT, padx=10)
+        
+        # Center the dialog
+        self.frame.update_idletasks()
+        width = faction_dialog.winfo_width()
+        height = faction_dialog.winfo_height()
+        x = (faction_dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (faction_dialog.winfo_screenheight() // 2) - (height // 2)
+        faction_dialog.geometry('{}x{}+{}+{}'.format(width, height, x, y))
+        
+        # Wait for dialog to close
+        faction_dialog.wait_window()
+        
+        # If dialog was cancelled
+        if not hasattr(faction_dialog, 'selected_faction') or faction_dialog.selected_faction is None:
+            return
+            
+        faction = faction_dialog.selected_faction
+        if faction == "NONE":
+            faction = None
+        
+        try:
+            # Check if the name is different from the current name
+            if name != player.name:
+                # Check if the name is already taken by another player
+                for p in self.app.players:
+                    if p != player and p.name.lower() == name.lower():
+                        raise ValueError(f"Player name '{name}' is already taken.")
+            
+            # Update player data
+            player.name = name
+            player.color = color_rgb
+            player.faction = faction
+            
+            # Redisplay players
+            self.display_players()
+            
+            # Update resource tiles if in Tregonia mode
+            if self.app.roll_mode == 'tregonia':
+                self.app.update_player_resources()
+                self.display_players()  # Refresh display to show updated resources
                 
-                # Combine all pieces
-                for x, y, piece in pieces:
-                    image.paste(piece, (x, y))
-                
-                # Save the image
-                image.save(file_path)
-                messagebox.showinfo("Success", "Players view exported successfully!")
-                
-            finally:
-                # Restore original scroll position
-                self.canvas.yview_moveto(original_scroll[0])
-                
-        except Exception as e:
-            messagebox.showerror("Export Error", f"Error exporting view: {str(e)}")
-
+        except ValueError as e:
+            tk.messagebox.showerror("Invalid Data", str(e))
+    
+    def delete_player(self, player):
+        """Delete a player"""
+        # Ask for confirmation
+        confirm = tk.messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete player {player.name}?")
+        if not confirm:
+            return
+            
+        # Remove the player
+        self.app.players.remove(player)
+        
+        # Redisplay players
+        self.display_players()
+        
+        # Update resource tiles if in Tregonia mode
+        if self.app.roll_mode == 'tregonia':
+            self.app.update_player_resources()
+    
     def destroy(self):
-        self.canvas.unbind_all("<MouseWheel>")  # Remove mousewheel binding
+        """Clean up resources when the screen is destroyed"""
+        self.canvas.unbind_all("<MouseWheel>")
         self.frame.destroy()
-
-    def adjust_region_bonus(self, player, amount):
-        """Adjust the region bonus for a player and update resources"""
-        # Update the region bonus
-        player.region_bonus = max(0, player.region_bonus + amount)
         
-        # Update the display if the UI element exists
-        if hasattr(player, 'ui_elements') and 'region_bonus_label' in player.ui_elements:
-            player.ui_elements['region_bonus_label'].config(text=str(player.region_bonus))
+    def update_player_list(self):
+        """Update the player list - can be called from other screens
+        to refresh player resource information"""
+        try:
+            # Redisplay all players with updated information
+            self.display_players()
+            print("Updated player list to show current resource information")
+        except Exception as e:
+            print(f"Error updating player list: {e}")
         
-        # Recalculate resource gains
-        self.app.update_player_resources()
+    def apply_theme(self, theme):
+        """Apply a theme to all widgets in this screen"""
+        self.current_theme = theme
         
-        # Update the player boxes to reflect new resource values
-        self.update_player_boxes()
+        # Apply to main frame
+        self.frame.configure(bg=theme['bg'])
+        
+        # Apply to all child widgets recursively
+        self.apply_theme_to_widgets(self.frame)
+        
+        # Redisplay players with new theme
+        self.display_players()
+        
+    def apply_theme_to_widgets(self, parent):
+        """Apply theme to all widgets in the given parent widget"""
+        for widget in parent.winfo_children():
+            try:
+                if isinstance(widget, tk.Frame) or isinstance(widget, tk.LabelFrame):
+                    # Don't change color display frames
+                    if widget.winfo_width() != 50 or widget.winfo_height() != 50:
+                        widget.configure(bg=self.current_theme['bg'])
+                elif isinstance(widget, tk.Button):
+                    widget.configure(
+                        bg=self.current_theme['button_bg'],
+                        fg=self.current_theme['button_fg'],
+                        activebackground=self.current_theme['highlight_bg'],
+                        activeforeground=self.current_theme['highlight_fg']
+                    )
+                elif isinstance(widget, tk.Label):
+                    widget.configure(
+                        bg=self.current_theme['bg'],
+                        fg=self.current_theme['fg']
+                    )
+                elif isinstance(widget, tk.Canvas):
+                    widget.configure(
+                        bg=self.current_theme['bg'],
+                        highlightbackground=self.current_theme['bg']
+                    )
+                # Apply to custom scrollbar
+                if hasattr(widget, 'canvas') and hasattr(widget, 'set'):
+                    try:
+                        widget.config(
+                            bg=self.current_theme.get('scrollbar_bg', self.current_theme['bg']),
+                            fg=self.current_theme.get('scrollbar_fg', self.current_theme['button_bg'])
+                        )
+                    except (tk.TclError, AttributeError):
+                        pass
+            except (tk.TclError, AttributeError):
+                # Skip widgets that can't be configured
+                pass
+            
+            # Apply to all children of this widget
+            if widget.winfo_children():
+                self.apply_theme_to_widgets(widget)

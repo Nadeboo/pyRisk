@@ -11,6 +11,9 @@ if __name__ == "__main__":
     import os
     import sys
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    
+    # Direct import when run as a script
+    from custom_scrollbar import CustomScrollbar
     from pyRisk.player import Player
     from pyRisk.game_state import GameState
     from pyRisk.roll_table import RollTable
@@ -24,6 +27,8 @@ if __name__ == "__main__":
     from pyRisk.research_screen import ResearchScreen
     from pyRisk.cities_screen import CitiesScreen
 else:
+    # Package import when imported as a module
+    from .custom_scrollbar import CustomScrollbar
     from .player import Player
     from .game_state import GameState
     from .roll_table import RollTable
@@ -44,11 +49,78 @@ class MSPaintRiskEditor:
         self.master.geometry("1024x768")
         self.roll_mode = 'tregonia'  # Always use Tregonia mode
         self.map_photo = None  # Initialize map_photo as None
+        
+        # Global scrollbar styling
+        self.master.option_add("*Scrollbar.Background", "#3C3F41")
+        self.master.option_add("*Scrollbar.foreground", "#5A5D5F")
+        self.master.option_add("*Scrollbar.activeBackground", "#5A5D5F")
+        self.master.option_add("*Scrollbar.troughColor", "#3C3F41")
+        self.master.option_add("*Scrollbar.borderWidth", "0")
+        self.master.option_add("*Scrollbar.relief", "flat")
+        
+        # Configure global scrollbar style for dark theme
+        self.master.tk_setPalette(
+            background='#2B2B2B',      # Dark gray background
+            foreground='#CCCCCC',      # Light gray text
+            selectBackground='#4B6EAF', # Blue highlight
+            selectForeground='#FFFFFF', # White highlight text
+            activeBackground='#4B6EAF', # Blue active background
+            activeForeground='#FFFFFF'  # White active text
+        )
+        
+        # Style scrollbars globally
+        self.master.option_add("*Scrollbar.Background", "#3C3F41")  # Dark scrollbar background
+        self.master.option_add("*Scrollbar.troughColor", "#3C3F41")  # Dark scrollbar trough
+        self.master.option_add("*Scrollbar.activeBackground", "#5A5D5F")  # Mid-gray active background
+        self.master.option_add("*Scrollbar.highlightBackground", "#3C3F41")  # Dark highlight background
+        self.master.option_add("*Scrollbar.highlightColor", "#3C3F41")  # Dark highlight color
+        self.master.option_add("*Scrollbar.activeRelief", "flat")  # Flat relief when active
+        self.master.option_add("*Scrollbar.borderWidth", 0)  # No border
+        self.master.option_add("*Scrollbar.relief", "flat")  # Flat relief
+        
+        # Define theme colors for light and dark mode
+        self.light_theme = {
+            'bg': '#FFFFFF',  # White background
+            'fg': '#000000',  # Black text
+            'button_bg': '#F0F0F0',  # Light gray button background
+            'button_fg': '#000000',  # Black button text
+            'frame_bg': '#F5F5F5',  # Light gray frame background
+            'canvas_bg': '#FFFFFF',  # White canvas background
+            'highlight_bg': '#E0E0E0',  # Light gray highlight
+            'highlight_fg': '#000000',  # Black highlight text
+            'menu_bg': '#F0F0F0',  # Light gray menu background
+            'menu_fg': '#000000',  # Black menu text
+        }
+        
+        self.dark_theme = {
+            'bg': '#2B2B2B',  # Dark gray background
+            'fg': '#CCCCCC',  # Light gray text
+            'button_bg': '#3C3F41',  # Mid-dark gray button background
+            'button_fg': '#CCCCCC',  # Light gray button text
+            'frame_bg': '#2B2B2B',  # Dark gray frame background
+            'canvas_bg': '#2B2B2B',  # Dark gray canvas background
+            'highlight_bg': '#4B6EAF',  # Blue highlight
+            'highlight_fg': '#FFFFFF',  # White highlight text
+            'menu_bg': '#3C3F41',  # Mid-dark gray menu background
+            'menu_fg': '#CCCCCC',  # Light gray menu text
+            'scrollbar_bg': '#2B2B2B',  # Dark gray scrollbar background (darker for better contrast)
+            'scrollbar_fg': '#4A4D4F',  # Slightly lighter scrollbar slider (subtle but visible)
+        }
+        
+        # Start with dark theme by default
+        self.dark_mode = True
+        self.current_theme = self.dark_theme
+        
         self.setup_menu()
         self.setup_ui()
         self.initialize_variables()
         self.resource_tiles = {}
-        self.RESOURCE_COLOR = (255, 255, 0)  # RGB for #45AD22
+        # Resource colors for different resource types
+        self.RESOURCE_COLORS = {
+            'gold': (255, 255, 0),   # Yellow for gold
+            'mana': (0, 0, 255)      # Blue for mana
+            # Green resources are blank and not tracked
+        }
         
         # Setup memory monitoring
         self.memory_monitoring = False
@@ -104,6 +176,11 @@ class MSPaintRiskEditor:
         toolsmenu.add_command(label="Clear Image Caches", command=self.clear_image_caches)
         menubar.add_cascade(label="Tools", menu=toolsmenu)
         
+        # View menu - Add Dark Mode toggle
+        viewmenu = tk.Menu(menubar, tearoff=0)
+        viewmenu.add_command(label="Toggle Dark Mode", command=self.toggle_dark_mode)
+        menubar.add_cascade(label="View", menu=viewmenu)
+        
         # Debug menu
         debugmenu = tk.Menu(menubar, tearoff=0)
         debugmenu.add_command(label="Toggle Memory Monitoring", command=self.toggle_memory_monitoring)
@@ -111,18 +188,38 @@ class MSPaintRiskEditor:
         menubar.add_cascade(label="Debug", menu=debugmenu)
         
         self.master.config(menu=menubar)
+        
+        # Apply theme to menus
+        self.apply_theme_to_menu(menubar)
+
+    def apply_theme_to_menu(self, menu):
+        """Apply the current theme to a menu"""
+        menu.config(bg=self.current_theme['menu_bg'], fg=self.current_theme['menu_fg'])
+        
+        # Apply to all cascaded menus
+        for item_index in range(menu.index('end') + 1 if menu.index('end') is not None else 0):
+            try:
+                item_type = menu.type(item_index)
+                if item_type == 'cascade':
+                    submenu = menu.nametowidget(menu.entrycget(item_index, 'menu'))
+                    self.apply_theme_to_menu(submenu)
+            except (tk.TclError, AttributeError):
+                continue
 
     def setup_ui(self):
-        self.main_frame = tk.Frame(self.master)
+        self.main_frame = tk.Frame(self.master, bg=self.current_theme['bg'])
         self.main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Create toolbar frame
-        self.toolbar = tk.Frame(self.main_frame)
+        self.toolbar = tk.Frame(self.main_frame, bg=self.current_theme['frame_bg'])
         self.toolbar.pack(side=tk.TOP, fill=tk.X)
         
         # Create single content frame
-        self.content_frame = tk.Frame(self.main_frame)
+        self.content_frame = tk.Frame(self.main_frame, bg=self.current_theme['bg'])
         self.content_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        
+        # Apply the current theme to the root window
+        self.master.configure(bg=self.current_theme['bg'])
         
         self.setup_toolbar_buttons()
 
@@ -141,95 +238,284 @@ class MSPaintRiskEditor:
             ("Armies", self.show_units_screen)
         ]
         for text, cmd in buttons:
-            btn = tk.Button(self.toolbar, text=text, command=cmd)
+            btn = tk.Button(self.toolbar, text=text, command=cmd,
+                          bg=self.current_theme['button_bg'],
+                          fg=self.current_theme['button_fg'],
+                          activebackground=self.current_theme['highlight_bg'],
+                          activeforeground=self.current_theme['highlight_fg'])
             btn.pack(side=tk.LEFT, padx=2, pady=2)
 
+    def toggle_dark_mode(self):
+        """Toggle between light and dark mode"""
+        self.dark_mode = not self.dark_mode
+        self.current_theme = self.dark_theme if self.dark_mode else self.light_theme
+        
+        # Apply the theme to all widgets
+        self.apply_theme_to_all()
+        
+        # Update the current screen if it exists
+        if self.current_screen:
+            self.refresh_current_screen()
+    
+    def apply_theme_to_all(self):
+        """Apply the current theme to all widgets in the application"""
+        # Apply to root window
+        self.master.configure(bg=self.current_theme['bg'])
+        
+        # Apply to main frame
+        self.main_frame.configure(bg=self.current_theme['bg'])
+        
+        # Apply to toolbar
+        self.toolbar.configure(bg=self.current_theme['frame_bg'])
+        
+        # Apply to toolbar buttons
+        for widget in self.toolbar.winfo_children():
+            if isinstance(widget, tk.Button):
+                widget.configure(bg=self.current_theme['button_bg'], 
+                                fg=self.current_theme['button_fg'],
+                                activebackground=self.current_theme['highlight_bg'],
+                                activeforeground=self.current_theme['highlight_fg'])
+        
+        # Apply to content frame
+        self.content_frame.configure(bg=self.current_theme['bg'])
+        
+        # Apply to menus
+        if hasattr(self.master, 'menubar'):
+            self.apply_theme_to_menu(self.master.menubar)
+        else:
+            menubar = self.master.nametowidget(self.master.cget('menu'))
+            self.apply_theme_to_menu(menubar)
+            
+    def refresh_current_screen(self):
+        """Refresh the current screen with the new theme"""
+        if not self.current_screen:
+            return
+            
+        # Store the current screen class to reinitialize it
+        current_screen_class = type(self.current_screen)
+        
+        # Destroy and recreate the current screen
+        self.current_screen.destroy()
+        self.current_screen = current_screen_class(self.content_frame, self)
+        
+        # If it's the game screen, trigger a redisplay of the map
+        if hasattr(self.current_screen, 'display_map_image'):
+            self.current_screen.invalidate_display_cache()
+            self.current_screen.display_map_image()
 
     def scan_for_resource_tiles(self):
         """Scan the map for resource tiles based on color, grouping adjacent pixels"""
         if not self.map_image or self.roll_mode != 'tregonia':
             return
+        
+        print("\n=== Scanning for Resources ===")
+        print(f"Looking for resources with colors: {self.RESOURCE_COLORS}")
             
         self.resource_tiles.clear()
         pixels = self.map_image.load()
         map_width, map_height = self.map_image.size
         
+        print(f"Map dimensions: {map_width}x{map_height}")
+        
         # Keep track of which pixels we've checked
         checked_pixels = set()
 
-        # Find all resource structures
-        resource_structures = []
+        # Track candidate pixels by resource type
+        resource_candidates = {
+            'gold': [],     # Yellow
+            'mana': []      # Blue
+            # Green resources are blank and not tracked
+        }
         
-        # Use a more efficient scanning approach - scan in blocks
-        block_size = 4  # Check every 4th pixel initially
-        candidate_pixels = []
+        # Use a more efficient scanning approach
+        block_size = 4  # Smaller block size for more thorough scan
+        
+        print("Starting first pass scan for resource pixels...")
         
         # First pass: find candidate pixels using a grid approach
         for x in range(0, map_width, block_size):
             for y in range(0, map_height, block_size):
                 if (x, y) not in checked_pixels:
-                    pixel = pixels[x, y]
-                    if len(pixel) == 4:
-                        pixel = pixel[:3]
-                    
-                    if pixel == self.RESOURCE_COLOR:
-                        candidate_pixels.append((x, y))
+                    # Safely handle boundary cases
+                    if x < map_width and y < map_height:
+                        try:
+                            pixel = pixels[x, y]
+                            if len(pixel) == 4:  # RGBA
+                                pixel = pixel[:3]  # Convert to RGB
+                            
+                            r, g, b = pixel
+                            
+                            # Check for each resource color with tolerance
+                            if r > 200 and g > 200 and b < 100:  # Yellow (gold)
+                                resource_candidates['gold'].append((x, y))
+                                checked_pixels.add((x, y))
+                            elif r < 100 and g < 100 and b > 200:  # Blue (mana)
+                                resource_candidates['mana'].append((x, y))
+                                checked_pixels.add((x, y))
+                            # Green resources are blank and not tracked
+                        except Exception as e:
+                            print(f"Error accessing pixel at ({x}, {y}): {e}")
         
-        # Second pass: process candidate pixels to find full structures
-        for x, y in candidate_pixels:
-            if (x, y) not in checked_pixels:
-                connected_pixels = self.find_connected_resource(x, y, pixels, checked_pixels, map_width, map_height)
+        # Report found candidate pixels
+        total_candidates = sum(len(candidates) for candidates in resource_candidates.values())
+        print(f"Found {total_candidates} total candidate resource pixels:")
+        for resource_type, candidates in resource_candidates.items():
+            print(f"- {resource_type}: {len(candidates)} candidates")
+        
+        if total_candidates == 0:
+            print("Warning: No resource pixels found! Check map coloring.")
+            return
+        
+        # Track structures by resource type
+        all_resource_structures = []
+        structure_id = 0
+        
+        # Second pass: process candidate pixels by resource type
+        for resource_type, candidates in resource_candidates.items():
+            print(f"\nProcessing {resource_type} candidates...")
+            resource_color = self.RESOURCE_COLORS[resource_type]
+            
+            # Use a dictionary to track x,y sums for center calculation
+            from collections import defaultdict
+            structure_stats = defaultdict(lambda: {'count': 0, 'x_sum': 0, 'y_sum': 0})
+            
+            for x, y in candidates:
+                # Skip if this pixel has been checked already as part of another structure
+                if (x, y) in checked_pixels and (x, y) not in candidates:
+                    continue
+                
+                # Find connected pixels of this resource type
+                connected_pixels = self.find_connected_resource(
+                    x, y, pixels, checked_pixels, map_width, map_height, resource_type, resource_color
+                )
+                
                 if connected_pixels and len(connected_pixels) > 0:
-                    # Calculate the center of the structure more efficiently
-                    x_sum = sum(x for x, _ in connected_pixels)
-                    y_sum = sum(y for _, y in connected_pixels)
-                    count = len(connected_pixels)
-                    avg_x = x_sum // count
-                    avg_y = y_sum // count
-                    
-                    # Store the center as the resource location
-                    self.resource_tiles[(avg_x, avg_y)] = {'type': 'gold', 'amount': 1}
-                    resource_structures.append(connected_pixels)
+                    # Only consider clusters of sufficient size (avoid noise)
+                    if len(connected_pixels) >= 5:
+                        # Calculate stats in a single pass through the pixels
+                        for px, py in connected_pixels:
+                            structure_stats[structure_id]['count'] += 1
+                            structure_stats[structure_id]['x_sum'] += px
+                            structure_stats[structure_id]['y_sum'] += py
+                        
+                        # Calculate center
+                        stats = structure_stats[structure_id]
+                        avg_x = stats['x_sum'] // stats['count']
+                        avg_y = stats['y_sum'] // stats['count']
+                        
+                        # Store the center as the resource location
+                        self.resource_tiles[(avg_x, avg_y)] = {
+                            'type': resource_type, 
+                            'owner': None, 
+                            'amount': 1
+                        }
+                        all_resource_structures.append({
+                            'type': resource_type,
+                            'pixels': connected_pixels,
+                            'center': (avg_x, avg_y)
+                        })
+                        
+                        print(f"{resource_type.capitalize()} structure #{structure_id} found at ({avg_x}, {avg_y}) with {len(connected_pixels)} pixels")
+                        structure_id += 1
+            
+        # Report on found resources
+        print(f"\nIdentified {len(all_resource_structures)} distinct resource structures:")
+        resource_counts = {}
+        for structure in all_resource_structures:
+            resource_type = structure['type']
+            resource_counts[resource_type] = resource_counts.get(resource_type, 0) + 1
         
-        print(f"Found {len(resource_structures)} distinct resource structures")
+        for resource_type, count in resource_counts.items():
+            print(f"- {resource_type}: {count} structures")
+        
+        # After scanning, update ownership based on territory
+        if all_resource_structures:
+            try:
+                if hasattr(self, 'map_interaction_manager'):
+                    self.map_interaction_manager.update_resource_ownership()
+                else:
+                    print("Warning: map_interaction_manager not available")
+            except Exception as e:
+                print(f"Error updating resource ownership: {e}")
 
-    def find_connected_resource(self, x, y, pixels, checked_pixels, map_width, map_height):
-        """Find all connected resource pixels starting from x,y using an iterative approach"""
-        if (x, y) in checked_pixels:
+    def find_connected_resource(self, x, y, pixels, checked_pixels, map_width, map_height, resource_type, resource_color):
+        """Find all connected resource pixels of a specific type starting from x,y"""
+        if (x, y) in checked_pixels and (x, y) not in [(x, y)]:  # Only check if not the starting point
             return set()
             
-        pixel = pixels[x, y]
-        if len(pixel) == 4:
-            pixel = pixel[:3]
+        # Pre-check if starting pixel is the right resource color
+        try:
+            pixel = pixels[x, y]
+            if len(pixel) == 4:
+                pixel = pixel[:3]
+                
+            # Check if this pixel is of the target resource type using color matching with tolerance
+            is_matching = False
+            r, g, b = pixel
             
-        if pixel != self.RESOURCE_COLOR:
+            if resource_type == 'gold':  # Yellow
+                is_matching = r > 200 and g > 200 and b < 100
+            elif resource_type == 'mana':  # Blue
+                is_matching = r < 100 and g < 100 and b > 200
+            # Green resources are blank and not tracked
+            
+            if not is_matching:
+                checked_pixels.add((x, y))  # Mark as checked to avoid revisiting
+                return set()
+        except Exception as e:
+            print(f"Error checking pixel at ({x}, {y}): {e}")
             return set()
             
         # This is a resource pixel we haven't checked
         connected = set()
         stack = [(x, y)]
         
+        # Pre-compute direction offsets
+        directions = [(0,1), (1,0), (0,-1), (-1,0)]
+        
+        # Pre-compute boundary checks
+        x_range = range(map_width)
+        y_range = range(map_height)
+        
         while stack:
             current_x, current_y = stack.pop()
             
-            if (current_x, current_y) in checked_pixels:
+            if (current_x, current_y) in checked_pixels and (current_x, current_y) in connected:
                 continue
                 
-            # Add to connected set and mark as checked
+            # Add to connected set and mark as checked in one operation
             connected.add((current_x, current_y))
             checked_pixels.add((current_x, current_y))
             
             # Check adjacent pixels
-            for dx, dy in [(0,1), (1,0), (0,-1), (-1,0)]:
+            for dx, dy in directions:
                 new_x, new_y = current_x + dx, current_y + dy
-                if 0 <= new_x < map_width and 0 <= new_y < map_height:
-                    if (new_x, new_y) not in checked_pixels:
+                
+                # Use pre-computed range for faster boundary checks
+                if new_x in x_range and new_y in y_range and (new_x, new_y) not in checked_pixels:
+                    try:
                         new_pixel = pixels[new_x, new_y]
                         if len(new_pixel) == 4:
                             new_pixel = new_pixel[:3]
                         
-                        if new_pixel == self.RESOURCE_COLOR:
+                        # Check if this pixel is of the target resource type
+                        r, g, b = new_pixel
+                        is_matching = False
+                        
+                        if resource_type == 'gold':  # Yellow
+                            is_matching = r > 200 and g > 200 and b < 100
+                        elif resource_type == 'mana':  # Blue
+                            is_matching = r < 100 and g < 100 and b > 200
+                        # Green resources are blank and not tracked
+                        
+                        if is_matching:
                             stack.append((new_x, new_y))
+                        else:
+                            # Mark non-matching pixels as checked to avoid revisiting
+                            checked_pixels.add((new_x, new_y))
+                    except Exception as e:
+                        # Handle any pixel access errors
+                        checked_pixels.add((new_x, new_y))
                 
         return connected
 
@@ -261,14 +547,111 @@ class MSPaintRiskEditor:
         self.switch_screen(UnitsScreen)
 
     def switch_screen(self, screen_class):
-        # Destroy current screen if it exists
+        """Switch to a different screen class, preserving state"""
+        # Store any needed state before destroying current screen
+        was_game_screen = False
         if self.current_screen:
+            was_game_screen = hasattr(self.current_screen, 'display_map_image')
+            was_same_class = isinstance(self.current_screen, screen_class)
             self.current_screen.destroy()
+            
         # Show toolbar
         self.toolbar.pack(side=tk.TOP, fill=tk.X)
         self.setup_toolbar_buttons()
-        # Initialize new screen
+        
+        # Initialize new screen with current theme
         self.current_screen = screen_class(self.content_frame, self)
+        
+        # Apply theme to the new screen
+        if hasattr(self.current_screen, 'apply_theme'):
+            self.current_screen.apply_theme(self.current_theme)
+        else:
+            # Apply theme to all widgets in the content frame
+            self.apply_theme_to_widgets(self.content_frame.winfo_children())
+        
+        # Make sure units are displayed if we're switching to the game screen
+        if hasattr(self.current_screen, 'display_map_image'):
+            # Clear any cached images to force a complete redraw
+            if hasattr(self.current_screen, 'invalidate_display_cache'):
+                self.current_screen.invalidate_display_cache()
+            # Force a redraw of the map image with units
+            self.current_screen.display_map_image()
+        
+        # Force update to ensure any visual elements are refreshed
+        self.master.update_idletasks()
+
+    def apply_theme_to_widgets(self, widgets):
+        """Apply theme to a list of widgets recursively"""
+        for widget in widgets:
+            try:
+                # Apply theme based on widget type
+                if isinstance(widget, tk.Frame) or isinstance(widget, tk.LabelFrame):
+                    widget.configure(bg=self.current_theme['bg'])
+                elif isinstance(widget, tk.Button):
+                    widget.configure(
+                        bg=self.current_theme['button_bg'],
+                        fg=self.current_theme['button_fg'],
+                        activebackground=self.current_theme['highlight_bg'],
+                        activeforeground=self.current_theme['highlight_fg']
+                    )
+                elif isinstance(widget, (tk.Label, tk.Checkbutton, tk.Radiobutton)):
+                    widget.configure(
+                        bg=self.current_theme['bg'],
+                        fg=self.current_theme['fg']
+                    )
+                    # Configure additional specific attributes for checkbuttons/radiobuttons
+                    if isinstance(widget, (tk.Checkbutton, tk.Radiobutton)):
+                        widget.configure(
+                            activebackground=self.current_theme['bg'],
+                            activeforeground=self.current_theme['fg'],
+                            selectcolor=self.current_theme['bg']
+                        )
+                elif isinstance(widget, tk.Entry) or isinstance(widget, tk.Text):
+                    widget.configure(
+                        bg=self.current_theme['bg'],
+                        fg=self.current_theme['fg'],
+                        insertbackground=self.current_theme['fg']  # cursor color
+                    )
+                elif isinstance(widget, tk.Canvas):
+                    widget.configure(bg=self.current_theme['canvas_bg'])
+                elif isinstance(widget, tk.Listbox):
+                    widget.configure(
+                        bg=self.current_theme['bg'],
+                        fg=self.current_theme['fg'],
+                        selectbackground=self.current_theme['highlight_bg'],
+                        selectforeground=self.current_theme['highlight_fg']
+                    )
+                elif isinstance(widget, tk.Scrollbar):
+                    # More detailed scrollbar configuration
+                    widget.configure(
+                        bg=self.current_theme['scrollbar_bg'],
+                        troughcolor=self.current_theme['scrollbar_bg'],
+                        activebackground=self.current_theme['scrollbar_fg'],
+                        highlightbackground=self.current_theme['scrollbar_bg']
+                    )
+                    # Try to set different attributes based on whether it's a ttk scrollbar or standard scrollbar
+                    try:
+                        widget.configure(elementborderwidth=0)
+                    except tk.TclError:
+                        pass
+                    try:
+                        # For ttk scrollbars, we need to use a style
+                        import tkinter.ttk as ttk
+                        if isinstance(widget, ttk.Scrollbar):
+                            style = ttk.Style()
+                            style.configure("Dark.Vertical.TScrollbar", 
+                                           background=self.current_theme['scrollbar_fg'],
+                                           troughcolor=self.current_theme['scrollbar_bg'])
+                            widget.configure(style="Dark.Vertical.TScrollbar")
+                    except (ImportError, tk.TclError):
+                        pass
+                
+                # Recursively apply to children
+                if widget.winfo_children():
+                    self.apply_theme_to_widgets(widget.winfo_children())
+            except tk.TclError:
+                # Skip any widgets that we can't configure
+                pass
 
     def import_map(self):
         """Import and initialize a new map image with detailed error logging to file"""
@@ -328,7 +711,6 @@ class MSPaintRiskEditor:
             error_msg = f"Error loading image: {str(e)}\nCheck {log_file} for full error details."
             messagebox.showerror("Error Loading Image", error_msg)
 
-
     def save_current_map_state(self):
         """Save the current map state including any units"""
         if self.map_image is None:
@@ -387,7 +769,7 @@ class MSPaintRiskEditor:
         if self.roll_mode != 'tregonia':
             return
                 
-        print("\nUpdating player resources:")
+        print("\n=== Updating Player Resources ===")
         
         # Reset resource gains for all players
         for player in self.players:
@@ -441,6 +823,8 @@ class MSPaintRiskEditor:
                         player.mana_per_turn += 1
                         player.add_resource_source('mana', 1, f'Mana tile at {pos}')
                         print(f"Added 1 mana/turn to {player.name}")
+                    # Green resources are blank and not tracked
+                    
                     print(f"{player.name} now has {player.gold_per_turn} gold/turn, {player.research_per_turn} research/turn, {player.mana_per_turn} mana/turn, and {player.influence_per_turn} influence/turn")
 
     def load_game_state(self, state):
@@ -542,15 +926,24 @@ class MSPaintRiskEditor:
         self.map_history.clear()
         
         # Clear screen caches if they exist
-        if self.current_screen and hasattr(self.current_screen, '_cached_base_image'):
-            self.current_screen._cached_base_image = None
+        if self.current_screen:
+            if hasattr(self.current_screen, '_cached_base_image'):
+                self.current_screen._cached_base_image = None
+            if hasattr(self.current_screen, '_tile_cache'):
+                self.current_screen._tile_cache.clear()
+            if hasattr(self.current_screen, 'tile_cache'):
+                self.current_screen.tile_cache.clear()
             
         # Clear any cached images in placed sprites
         if hasattr(self, 'placed_sprites'):
-            for sprite_info in self.placed_sprites.values():
+            for sprite_id, sprite_info in list(self.placed_sprites.items()):
                 if hasattr(sprite_info, 'extra_data') and sprite_info.extra_data:
                     if 'colored_sprite' in sprite_info.extra_data:
                         sprite_info.extra_data['colored_sprite'] = None
+        
+        # Force garbage collection after clearing caches
+        import gc
+        gc.collect()
 
     def validate_player_data(self, name, color, faction):
         """
@@ -766,6 +1159,7 @@ class MSPaintRiskEditor:
         messagebox.showinfo("Territory Cleared", "All territory ownership has been cleared.")
 
 def main():
+    print("Starting MSPaint Risk Editor...")
     root = tk.Tk()
     app = MSPaintRiskEditor(root)
     root.protocol("WM_DELETE_WINDOW", app.on_exit)

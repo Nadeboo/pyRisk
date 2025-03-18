@@ -37,12 +37,78 @@ class SpriteManager:
 
     def load_sprites(self):
         """Load all sprites from the sprites folder"""
+        # Print current working directory and full sprite folder path for debugging
+        import os
+        current_dir = os.getcwd()
+        full_path = os.path.abspath(self.sprite_folder)
+        print(f"Current working directory: {current_dir}")
+        print(f"Loading sprites from: {full_path}")
+        
+        # Try alternative sprite folder locations if specified folder doesn't exist
         if not os.path.exists(self.sprite_folder):
-            os.makedirs(self.sprite_folder)
-            print(f"Created sprites folder: {self.sprite_folder}")
+            print(f"Sprite folder {self.sprite_folder} doesn't exist")
+            
+            # Try alternate locations
+            alternate_folders = [
+                "sprites",                 # Root sprites folder
+                "pyRisk/sprites",          # Package sprites folder
+                "../sprites",              # Parent directory sprites folder
+                "../../sprites",           # Grandparent directory sprites folder
+                "/mnt/c/Users/glugg/source/repos/Nadeboo/pyRisk/pyRisk/sprites",  # Full path to sprites
+                os.path.join(current_dir, "sprites"),  # Sprites in current dir
+                os.path.join(current_dir, "pyRisk/sprites")  # Sprites in pyRisk subfolder
+            ]
+            
+            print(f"Searching for sprite folder in alternate locations:")
+            for alt_folder in alternate_folders:
+                print(f"  Checking {alt_folder}...")
+                if os.path.exists(alt_folder):
+                    print(f"  Found sprite folder: {alt_folder}")
+                    self.sprite_folder = alt_folder
+                    break
+            else:
+                # If no alternate folders found, create the specified one
+                try:
+                    os.makedirs(self.sprite_folder)
+                    print(f"Created sprites folder: {self.sprite_folder}")
+                except Exception as e:
+                    print(f"Failed to create sprites folder: {e}")
+                return
+
+        print(f"Loading sprites from: {self.sprite_folder}")
+        try:
+            sprite_files = os.listdir(self.sprite_folder)
+            print(f"Found {len(sprite_files)} files in sprite folder")
+            
+            if not sprite_files:
+                print(f"WARNING: Sprite folder {self.sprite_folder} is empty!")
+                # Try to debug why this is happening
+                dirs_to_check = [
+                    current_dir,
+                    os.path.join(current_dir, "pyRisk"),
+                    os.path.join(current_dir, "sprites"),
+                    "/mnt/c/Users/glugg/source/repos/Nadeboo/pyRisk",
+                    "/mnt/c/Users/glugg/source/repos/Nadeboo/pyRisk/pyRisk",
+                    "/mnt/c/Users/glugg/source/repos/Nadeboo/pyRisk/sprites"
+                ]
+                print("Listing directories to help debug sprite loading issues:")
+                for d in dirs_to_check:
+                    if os.path.exists(d):
+                        print(f"  Contents of {d}:")
+                        try:
+                            for item in os.listdir(d)[:10]:  # Show first 10 items
+                                print(f"    {item}")
+                            if len(os.listdir(d)) > 10:
+                                print(f"    ... and {len(os.listdir(d)) - 10} more items")
+                        except Exception as e:
+                            print(f"    Error listing directory: {e}")
+                    else:
+                        print(f"  Directory {d} does not exist")
+        except Exception as e:
+            print(f"Error listing sprite folder {self.sprite_folder}: {e}")
             return
 
-        for filename in os.listdir(self.sprite_folder):
+        for filename in sprite_files:
             if filename.endswith(('.png', '.jpg', '.jpeg')):
                 sprite_name = os.path.splitext(filename)[0]
                 try:
@@ -52,6 +118,8 @@ class SpriteManager:
                     print(f"Loaded sprite: {sprite_name}")
                 except Exception as e:
                     print(f"Error loading sprite {filename}: {e}")
+                    
+        print(f"Successfully loaded {len(self.sprites)} sprites")
 
     def add_sprite(self, sprite_type: str, position: Tuple[int, int], owner: Optional[str] = None, 
                   extra_data: Dict = None) -> bool:
@@ -129,3 +197,42 @@ class SpriteManager:
         for pos, color in color_data.items():
             pixels[pos[0], pos[1]] = color + (pixels[pos[0], pos[1]][3],)  # Preserve alpha
         return recolored
+        
+    def available_sprites(self) -> list:
+        """Return a list of all available sprite types"""
+        sprites = list(self.sprites.keys())
+        print(f"Available sprites: {sprites}")
+        return sprites
+        
+    def place_sprite(self, x: int, y: int, sprite_type: str, owner: str = None) -> bool:
+        """Place a sprite on the map at the specified position
+        
+        Args:
+            x: X-coordinate on the map
+            y: Y-coordinate on the map
+            sprite_type: Type of sprite to place
+            owner: Name of the player who owns this sprite
+            
+        Returns:
+            True if the sprite was placed successfully, False otherwise
+        """
+        # Check if the sprite type exists
+        if sprite_type not in self.sprites:
+            print(f"Error: Sprite type '{sprite_type}' not found")
+            return False
+            
+        # Create the position tuple
+        position = (x, y)
+        
+        # Add the sprite to the placed_sprites dictionary
+        self.app.placed_sprites[position] = SpriteInfo(
+            sprite_type=sprite_type,
+            position=position,
+            owner=owner
+        )
+        
+        # Update the display
+        if hasattr(self.app, 'current_screen') and hasattr(self.app.current_screen, 'display_map_image'):
+            self.app.current_screen.display_map_image()
+            
+        return True
